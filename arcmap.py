@@ -21,7 +21,7 @@ import pathlib
 from mycode.decorator import unrepe
 
 
-_rasters = [rasterio.io.DatasetReader,rasterio.io.DatasetWriter,rasterio.io.MemoryFile,rasterio.vrt.WarpedVRT]
+#_rasters = [rasterio.io.DatasetReader,rasterio.io.DatasetWriter,rasterio.io.MemoryFile,rasterio.vrt.WarpedVRT]
 
 class raster():
     pass

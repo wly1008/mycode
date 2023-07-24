@@ -15,5 +15,5 @@ import rasterio
 import inspect
 import pathlib
 from rasterio.enums import Resampling
-
+import time
 

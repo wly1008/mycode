@@ -11,6 +11,49 @@ import pandas as pd
 import sys
 
 
+
+
+def wlen(x,n:int,f_len:int=0,f_str:str =None):
+    '''
+    重组字符串，规定每行的最大长度
+
+    Parameters
+    ----------
+    x : TYPE
+        输入的字符串，或想打印的变量
+    n : int
+        行的限定长度
+    f_len : (str,int), optional
+        第一行预留的长度，如第一行有说明文字可用此参数.
+        The default is 0.
+    f_str : str, optional
+        要在第一行添加的字符串说明输出会加上，填了f_str就不用填f_len
+
+    Raises
+    ------
+
+    Returns
+    -------
+    new_x : str
+        重组后字符串
+
+    '''
+    # 字符串初始化
+    x = str(x) if not isinstance(x, str) else x
+    x = (f_str if f_str else '-'*f_len) + x.replace('\n', '')  # 添加头文字，消除换行符
+
+    # 处理
+    hlen = len(x) // n + 1
+    # lst = [x[n*i:n*(i+1)] for i in range(hlen)]
+    new_x = '\n'.join([x[n*i:n*(i+1)] for i in range(hlen)])
+    
+    return new_x if f_str else new_x[f_len:]
+
+    
+
+
+
+
 # nnan = []
 def get_num(x,lst_and = []):   
     x = str(x) + '/'
@@ -88,26 +131,22 @@ def evals(*runs,**kwargs):
 
     '''
     
-    returns = []
+    results = []
     for run in runs:
-        
+
         if isiterable(run) & (type(run) != str):
             # 递归
-            returns.append([evals(i,**kwargs) for i in run])
+            results.append([evals(i,**kwargs) for i in run])
         else:
             # # 解包变量
             # for k,v in kwargs.items():
             #     locals()[k] = v
-            
-            
+
             # 操作
-            returns.append(eval(run,globals(),kwargs))
-            # returns.append(eval(_run))
+            results.append(eval(run,globals(),kwargs))
+            # results.append(eval(_run))
 
-    if len(returns) == 1:
-        returns = returns[0]
-    return returns
-
+    return results[0] if len(results) == 1 else results
 
 def getattrs(src, *args, ds={}, get_runs=False, **kwargs):
     '''

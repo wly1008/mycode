@@ -19,9 +19,9 @@ import inspect
 from rasterio.warp import reproject as _reproject
 import pathlib
 from mycode.decorator import unrepe
+import math
 
-
-#_rasters = [rasterio.io.DatasetReader,rasterio.io.DatasetWriter,rasterio.io.MemoryFile,rasterio.vrt.WarpedVRT]
+_rasters = [rasterio.io.DatasetReader,rasterio.io.DatasetWriter,rasterio.io.MemoryFile,rasterio.vrt.WarpedVRT]
 
 class raster():
     pass
@@ -82,7 +82,7 @@ def get_RasterAttr(raster_in, *args, ds={}, **kwargs):
     _getattrs = partial(cd.getattrs, **dic)
     
     
-    src = rasterio.open(raster_in) if isinstance(raster_in, (str,pathlib.Path)) else raster_in
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
 
     return _getattrs(src, *args, ds=ds, **kwargs)
 
@@ -119,7 +119,10 @@ def add_attrs_raster(src, ds={}, **kwargs):
 
 
 
-def check(raster_in, args=(), dst_in=None, dst_attrs=None,need=None,printf=False):
+def check(raster_in,
+          dst_in=None, dst_attrs=None,
+          args=(), need=None,
+          printf=False,w_len=75):
     '''
     检验栅格数据是否统一
     (空间参考、范围、栅格行列数)
@@ -152,9 +155,9 @@ def check(raster_in, args=(), dst_in=None, dst_attrs=None,need=None,printf=False
 
     if dst_attrs:
         if "Bounds" in attrnames:
+            dst_attrs = list(dst_attrs) if not isinstance(dst_attrs, list) else dst_attrs
             for i in range(len(attrnames)):
-                if attrnames == "Bounds":
-                    dst_attrs = list(dst_attrs) if isinstance(dst_attrs, list) else dst_attrs
+                if attrnames[i] == "Bounds":
                     dst_attrs[i] = [float(f"{n:f}") for n in dst_attrs[i]]
     elif dst_in:
         dst_attrs = get_RasterAttr(dst_in, attrnames)
@@ -168,8 +171,13 @@ def check(raster_in, args=(), dst_in=None, dst_attrs=None,need=None,printf=False
     
     if printf:
         # 规范打印
-        [print(f'\n{"-"*70}\n{"-"*int((70-len(attrnames[i]))/2-2)}<{attrnames[i]}>{"-"*(70-int((70-len(attrnames[i]))/2-2)-len(attrnames[i])-5)}---\n--->src: {src_attrs[i]}\n--->dst: {dst_attrs[i]}') for i in range(len(attrnames)) if attrnames[i] in diffe]
-    
+        [print(f'\n{"-"*w_len}\
+                 \n{("<"+attrnames[i]+">"):-^{w_len}}\
+                 \n--->src : {cd.wlen(src_attrs[i],w_len,10)}\
+                 \n-\
+                 \n--->dst : {cd.wlen(dst_attrs[i],w_len,10)}') 
+         for i in range(len(attrnames)) if attrnames[i] in diffe]
+        
     if diffe == []:
         return True,[]
     else:
@@ -178,7 +186,7 @@ def check(raster_in, args=(), dst_in=None, dst_attrs=None,need=None,printf=False
 
 
 def copy_raster(raster_in, out_path):
-    src = rasterio.open(raster_in) if isinstance(raster_in, (str,pathlib.Path)) else raster_in
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
     out_ds(ds=src,out_path=out_path)
     
 
@@ -253,39 +261,23 @@ def window(raster_in, shape):
     '''
 
     
-    src = rasterio.open(raster_in) if isinstance(raster_in, (str,pathlib.Path)) else raster_in
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
     
     xsize, xend = divmod(src.width, shape[1])
     ysize, yend = divmod(src.height, shape[0])
     
     y_off = 0
-    y_inx = 0
     inxs = []
     # inx = {}
     windows = []
-    for ax0 in range(shape[0]):
-        
+    for y_inx,ax0 in enumerate(range(shape[0])):
         
         x_off = 0
-        x_inx = 0
+        height = ysize + yend if ax0 == (shape[0] - 1) else ysize
+        for x_inx,ax1 in enumerate(range(shape[1])):
 
-        if (ax0 == (shape[0] - 1)):
-            height = ysize + yend
-        else:
-            height = ysize
-
-        for ax1 in range(shape[1]):
-
-            if (ax1 == (shape[1] - 1)):
-                width = xsize + xend
-            else:
-                width = xsize
-
-            windown = Window(x_off, y_off, width, height)
-
-            windows.append(windown)
-            
-            
+            width = xsize + xend if ax1 == (shape[1] - 1) else xsize
+            windows.append(Window(x_off, y_off, width, height))
             
             '''
             
@@ -299,14 +291,11 @@ def window(raster_in, shape):
 
             inxs.append(inx.copy())
             '''
-            
             inxs.append((y_inx,x_inx))
             
             x_off += width
-            x_inx += 1
         
         y_off += height
-        y_inx += 1
 
     return windows, inxs
 
@@ -338,8 +327,11 @@ def read(raster_in:raster,
         栅格矩阵（单列or原型）；profile;shape
 
     """
+    
 
-    src = rasterio.open(raster_in) if isinstance(raster_in, (str,pathlib.Path)) else raster_in
+    assert n in (1,2,3)
+
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
     arr = src.read().astype(dtype)
     nodata = dtype(src.nodata)
     shape = arr.shape
@@ -353,27 +345,14 @@ def read(raster_in:raster,
     
     # 是否保留变形，是否变为df
     if tran:
-        if get_df:
-            data = df
-        else:
-            data = np.array(df)
+        data = df if get_df else np.array(df)
 
     else:
-        if (shape[0] == 1) & (get_df):
-            data = pd.DataFrame(np.array(df).reshape(shape)[0])
-
-        else:
-            data = np.array(df).reshape(shape)
-
+        data = (pd.DataFrame(np.array(df).reshape(shape)[0]) 
+                if (shape[0] == 1) & bool(get_df)
+                else np.array(df).reshape(shape))    
     # 返回
-    if n == 1:
-        return data
-    elif n == 2:
-        return data, profile
-    elif n == 3:
-        return data, profile, shape
-    else:
-        print('n=1 or 2 or 3')
+    return (data, profile, shape)[:n] if n != 1 else data 
 
 
 def out(out_path, data, profile):
@@ -490,7 +469,7 @@ def resampling(raster_in, out_path =None, get_ds=True,
 
         return data
 
-    src = rasterio.open(raster_in) if isinstance(raster_in, (str,pathlib.Path)) else raster_in
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
 
     # 取出所需参数
     nodata, profile, count, height, width, bounds= get_RasterAttr(src, *(
@@ -624,7 +603,7 @@ def reproject(raster_in, dst_in=None,
     
 
     
-    src = rasterio.open(raster_in) if isinstance(raster_in, (str,pathlib.Path)) else raster_in
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
     if crs:
         pass
     elif dst_in:
@@ -719,8 +698,8 @@ def extract(raster_in, dst_in,
 
     """
 
-    src = rasterio.open(raster_in) if isinstance(raster_in, (str,pathlib.Path)) else raster_in
-    dst = rasterio.open(dst_in) if isinstance(dst_in, (str,pathlib.Path)) else dst_in
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
+    dst = rasterio.open(dst_in) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
     # attrnames = ('crs', 'raster_size', 'Bounds')
 
     # src_attrs = get_RasterAttr(src, attrnames)
@@ -829,7 +808,7 @@ def clip(raster_in,
                      out_path=_out_path, get_ds=get_ds) for _src,_out_path in zip(raster_in,out_path)]
     
  
-    src = rasterio.open(raster_in) if isinstance(raster_in, (str,pathlib.Path)) else raster_in
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
 
     if dst_in:
 
@@ -1016,8 +995,8 @@ def zonal(raster_in, dst_in, stats, dic=None):
 
     '''
     
-    src = rasterio.open(raster_in) if isinstance(raster_in, (str,pathlib.Path)) else raster_in
-    dst = rasterio.open(dst_in) if isinstance(dst_in, (str,pathlib.Path)) else dst_in
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
+    dst = rasterio.open(dst_in) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
     
     
     judge,dif = check(raster_in=src, dst_in=dst)
@@ -1031,8 +1010,8 @@ def zonal(raster_in, dst_in, stats, dic=None):
         raise Exception(mis)
     
     
-    df_src = read(src)
-    df_dst = read(dst)
+    df_src = read(raster_in=src, n=1)
+    df_dst = read(raster_in=dst, n=1)
     
     df_return = pd.DataFrame(index=(['name']+stats))
     
@@ -1042,20 +1021,18 @@ def zonal(raster_in, dst_in, stats, dic=None):
         warnings.warn('\n分区数为%d,分区栅格可能为浮点型栅格'%len(areas))
     
     
-    
+    dic = dic if bool(dic) else {}
     for area in areas:
         
         serice = pd.Series(dtype='float64')
-        try:
-            serice['name'] = dic[area]
-        except:
-            serice['name'] = area
+        
+        serice['name'] = dic.get(area,area)
 
-        value = df_src[df_dst.isin([area])].agg(stats,axis=0)  # isin()解决np.nan不被 == 检索问题
+
+        value = df_src[df_dst[0].isin([area])].agg(stats,axis=0)  # isin()解决np.nan不被 == 检索问题
         serice = pd.concat([serice,value])
         df_return = pd.concat([df_return,serice],axis=1)
     return df_return.T
-
 
 
 
@@ -1087,8 +1064,8 @@ def three_sigma(raster_in,dst_in,out_path=None, get_ds=True):
 
     '''
     
-    src = rasterio.open(raster_in) if isinstance(raster_in, (str,pathlib.Path)) else raster_in
-    dst = rasterio.open(dst_in) if isinstance(dst_in, (str,pathlib.Path)) else dst_in
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
+    dst = rasterio.open(dst_in) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
     
     
     judge,dif = check(raster_in=src, dst_in=dst)
@@ -1126,7 +1103,7 @@ def three_sigma(raster_in,dst_in,out_path=None, get_ds=True):
 
 
 
-@unrepe(src='raster_in',attrs=['crs','Bounds','raster_size'],dst='dst_in',moni_args=['run_how'],moni_kwargs={'Extract':(0,False,None,(),{})},return_and_dict=(_return,{'ds':'raster_in'},{}))
+@unrepe(src='raster_in',attrs=['crs','Bounds','raster_size'],dst='dst_in',moni_args=['run_how'],moni_kwargs={'Extract':(0,False,None,(),{},'')},return_and_dict=(_return,{'ds':'raster_in'},{}))
 def unify(raster_in, dst_in,
           out_path=None, get_ds=True,
           Extract=False, how='mode',run_how=None,
@@ -1187,10 +1164,12 @@ def unify(raster_in, dst_in,
         kwargs_extract.update({k: v for k, v in kwargs.items() if k in inspect.getfullargspec(extract)[0]}) #接收其他参数 
         
         return extract(raster_in=ds, dst_in=dst_in,out_path=out_path,get_ds=get_ds,**kwargs_extract)
-    
+
     # 获得栅格变量
-    src = rasterio.open(raster_in) if isinstance(raster_in, (str,pathlib.Path)) else raster_in
-    dst = rasterio.open(dst_in) if isinstance(dst_in, (str,pathlib.Path)) else dst_in
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
+    dst = rasterio.open(dst_in) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
+    
+
     # 检查哪些属性需要统一
     judge,dif = check(raster_in=src, dst_in=dst)
     if judge:
@@ -1418,7 +1397,7 @@ def zonal_u(raster_in, dst_in, stats,dic=None,**kwargs):
 
     '''
     
-    ds = unify(dst_in, raster_in, out_path=None, **kwargs)
+    ds = unify(raster_in = dst_in, dst_in = raster_in, out_path=None, **kwargs)
     return zonal(raster_in=raster_in,dst_in=ds, stats=stats,dic=dic)
        
  
@@ -1434,25 +1413,43 @@ def zonal_u(raster_in, dst_in, stats,dic=None,**kwargs):
 
 
 if __name__ == '__main__':
-    raster_in = r'F:/PyCharm/pythonProject1/arcmap/015温度/土地利用/landuse_4y/1981-5km-tiff.tif'
+    raster_in = r'F:/PyCharm/pythonProject1/arcmap/015温度/土地利用/landuse_4y/1990-5km-tiff.tif'
 
     dst_in = r'F:\PyCharm\pythonProject1\arcmap\007那曲市\data\eva平均\eva_2.tif'
 
     out_path = r'F:\PyCharm\pythonProject1\代码\mycode\测试文件\1981-5km-tiff13.tif'
     
     out_path1 = r'F:\PyCharm\pythonProject1\arcmap\015温度\zonal\grand_average.xlsx'
+
+
+    check(raster_in,dst_in=dst_in,printf=1,w_len=80)
+    df = zonal_u(raster_in=dst_in, dst_in=raster_in, stats = ['sum','max','min'])
     
-    s = time.time()
-    ds = unify(raster_in,dst_in=dst_in)
-    print('运行时间：%.2f'%(time.time()-s)+'s')
-    s = time.time()
-    ds1 = unify(dst_in,dst_in=ds)
-    ds1 = unify(dst_in,dst_in=ds)
-    ds1 = unify(dst_in,dst_in=ds)
-    ds1 = unify(dst_in,dst_in=ds)
-    ds1 = unify(dst_in,dst_in=ds)
-    ds1 = unify(dst_in,dst_in=ds)
-    print('运行时间：%.2f'%(time.time()-s)+'s')
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    # s = time.time()
+    # ds = unify(raster_in,dst_in=dst_in)
+    # print('运行时间：%.2f'%(time.time()-s)+'s')
+    # s = time.time()
+    # ds1 = unify(dst_in,dst_in=ds)
+    # ds1 = unify(dst_in,dst_in=ds)
+    # ds1 = unify(dst_in,dst_in=ds)
+    # ds1 = unify(dst_in,dst_in=ds)
+    # ds1 = unify(dst_in,dst_in=ds)
+    # ds1 = unify(dst_in,dst_in=ds)
+    # print('运行时间：%.2f'%(time.time()-s)+'s')
     
     
     

@@ -69,6 +69,7 @@ def get_RasterAttr(raster_in, *args, ds={}, **kwargs):
 
     dic = {'raster_size': r"(src.height, src.width)",
            'cell_size': r"(src.xsize, src.ysize)",
+           # 'dtype':r"src.dtypes[0]",
            'bends': 'count', 
            'xsize': r'transform[0]', 
            'ysize': r'abs(src.transform[4])',
@@ -232,6 +233,9 @@ def _return(out_path=None,get_ds=True,arr=None,profile=None,ds=None):
         out(out_path=out_path,data=arr, profile=profile)
         
     elif get_ds:
+        shape = (profile['count'], profile['height'], profile['width'])
+        if arr.shape != shape:
+            arr = np.array(arr).reshape(shape)
         ds = create_raster(**profile)
         ds.write(arr)
         return ds
@@ -302,7 +306,7 @@ def window(raster_in, shape):
 
 def read(raster_in:raster,
          n=1, tran=True, get_df=True,
-         nan=np.nan, dtype=np.float64):
+         nan=np.nan, dtype=np.float32):
     """
     
 
@@ -374,8 +378,6 @@ def out(out_path, data, profile):
         src.write(data)
 
 
-
-
 def out_ds(ds, out_path):
     """
     输出栅格数据
@@ -397,6 +399,72 @@ def out_ds(ds, out_path):
     profile = ds.profile
     with rasterio.open(out_path, 'w', **profile) as src:
         src.write(arr)
+
+
+
+
+
+
+def renan(raster_in, dst_in=None, nan=np.nan, dtype=np.float32, get_ds=True, out_path=None):
+    '''
+    替换无效值
+    
+    dst_in的dtype可能是字符串，不是可调用类对象，这种情况会报错
+    
+    Parameters
+    ----------
+    raster_in : TYPE
+        DESCRIPTION.
+    dst_in : TYPE, optional
+        DESCRIPTION. The default is None.
+    nan : TYPE, optional
+        DESCRIPTION. The default is np.nan.
+    dtype : TYPE, optional
+        DESCRIPTION. The default is np.float32.
+    get_ds : TYPE, optional
+        DESCRIPTION. The default is True.
+    out_path : TYPE, optional
+        DESCRIPTION. The default is None.
+
+    Returns
+    -------
+    TYPE
+        DESCRIPTION.
+
+    '''
+    
+    # src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
+    
+    
+    nan,dtype = get_RasterAttr(dst_in,'nodata','dtype',**{'dtype':r'profile["dtype"]'}) if dst_in else nan,dtype
+    if type(dtype) is str:
+        dtype = dtype if 'np.' in dtype else 'np.' + dtype
+        dtype = eval(dtype)
+    arr, profile = read(raster_in=raster_in,n=2,tran=False, get_df=False,nan=nan,dtype=dtype)
+    
+    return _return(out_path=out_path, get_ds=get_ds, arr=arr, profile=profile)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def resampling(raster_in, out_path =None, get_ds=True,
@@ -1036,7 +1104,7 @@ def zonal(raster_in, dst_in, stats, dic=None):
 
 
 
-def three_sigma(raster_in,dst_in,out_path=None, get_ds=True):
+def three_sigma(raster_in,dst_in=None,out_path=None, get_ds=True):
     '''
     三倍标准差剔除离散值
 
@@ -1065,37 +1133,47 @@ def three_sigma(raster_in,dst_in,out_path=None, get_ds=True):
     '''
     
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
-    dst = rasterio.open(dst_in) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
     
+    if dst_in is None:
+        df_src,profile = read(src,2)
+        df_src = cd.three_sigma(df_src)
     
-    judge,dif = check(raster_in=src, dst_in=dst)
+    else:
+        dst = rasterio.open(dst_in) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
+        
+        
+        judge,dif = check(raster_in=src, dst_in=dst)
+    
+        if not judge:
+            
+            mis = '\nextract 无法正确提取:\n'
+            for i in dif:
+                mis += f'\n    \"{i}\" 不一致'
+            mis += '\n\n----<请统一以上属性>'
+            raise Exception(mis)
 
-    if not judge:
         
-        mis = '\nextract 无法正确提取:\n'
-        for i in dif:
-            mis += f'\n    \"{i}\" 不一致'
-        mis += '\n\n----<请统一以上属性>'
-        raise Exception(mis)
-    
-    
-    
-    
-    df_src,profile = read(src,2)
-    df_dst = read(dst)
-    
-    areas = list(df_dst[0].unique())
-    if len(areas) >= 1000:
-        warnings.warn('\n分区数为%d,分区栅格可能为浮点型栅格'%len(areas))
-    
-    for area in areas:
-        df_x = df_src[df_dst==area]
-        mean = df_x[0].mean()
-        std = df_x[0].std()
+        df_src,profile = read(src,2)
+        df_dst = read(dst)
         
-        df_src[(df_x[0] < mean - 3 * std) | (df_x[0] > mean + 3 * std)] = np.nan
+        areas = list(df_dst[0].unique())
+        if len(areas) >= 1000:
+            warnings.warn('\n分区数为%d,分区栅格可能为浮点型栅格'%len(areas))
+        
+        for area in areas:
+            # areax = df_dst[(df_dst==area)]
+            areax = (df_dst==area)
+            df_src = cd.three_sigma(df_src,[areax])
+            
+            
+            
+            # df_x = df_src[df_dst==area]
+            # mean = df_x[0].mean()
+            # std = df_x[0].std()
+            
+            # df_src[(df_x[0] < mean - 3 * std) | (df_x[0] > mean + 3 * std)] = np.nan
     
-    _return(out_path, get_ds, arr=df_src, profile=profile)
+    return _return(out_path, get_ds, arr=df_src, profile=profile)
 
 
 
@@ -1417,15 +1495,17 @@ if __name__ == '__main__':
 
     dst_in = r'F:\PyCharm\pythonProject1\arcmap\007那曲市\data\eva平均\eva_2.tif'
 
-    out_path = r'F:\PyCharm\pythonProject1\代码\mycode\测试文件\1981-5km-tiff13.tif'
+    out_path = r'F:\PyCharm\pythonProject1\代码\mycode\测试文件\eva5_1.tif'
     
     out_path1 = r'F:\PyCharm\pythonProject1\arcmap\015温度\zonal\grand_average.xlsx'
 
-
-    check(raster_in,dst_in=dst_in,printf=1,w_len=80)
-    df = zonal_u(raster_in=dst_in, dst_in=raster_in, stats = ['sum','max','min'])
-    
-    
+    src = rasterio.open(raster_in)
+    # check(raster_in,dst_in=dst_in,printf=1,w_len=80)
+    # df = zonal_u(raster_in=dst_in, dst_in=raster_in, stats = ['sum','max','min'])
+    # src.dtypes
+    dst = unify(raster_in,dst_in)
+    ds = three_sigma(dst_in,dst)
+    # out_ds(ds, out_path)
     
     
     

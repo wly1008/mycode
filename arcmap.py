@@ -1482,7 +1482,7 @@ def mask(raster_in,
 
 """
 
-def zonal_u(raster_in, dst_in, stats,dic=None,**kwargs):
+def zonal_u(raster_in, dst_in, stats, areas=[], dic=None, index='name',get_table=True,get_ds=False,**kwargs):
     '''
     分区统计
     含临时统一操作
@@ -1510,7 +1510,7 @@ def zonal_u(raster_in, dst_in, stats,dic=None,**kwargs):
     '''
     
     ds = unify(raster_in = dst_in, dst_in = raster_in, out_path=None, **kwargs)
-    return zonal(raster_in=raster_in,dst_in=ds, stats=stats,dic=dic)
+    return zonal(raster_in=raster_in,dst_in=ds, stats=stats,areas=areas,dic=dic,index=index,get_table=get_table,get_ds=get_ds)
        
  
 

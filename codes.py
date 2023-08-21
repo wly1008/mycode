@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 import sys
 import warnings
-
-
+from typing import overload, Sequence, Iterator
+from functools import partial,wraps
 
 def wlen(x,n:int,f_len:int=0,f_str:str =None):
     '''
@@ -97,6 +97,136 @@ def three_sigma(array,areas=None) -> np.array:
 
 
 
+def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
+    '''
+    矩阵分区统计
+    
+
+    Parameters
+    ----------
+    raster_in : TYPE
+        输入栅格
+    dst_in : TYPE
+        分区数据栅格
+    stats : 
+       统计类型。基于df.agg(stats) .e.g. 'mean' or ['mean','sum','max']...
+    areas : 
+        需要统计的分区，为[]时都统计，默认都统计
+    dic : dict
+        分区数据栅格各值对应属性
+    
+    index : list,str
+    设置表格的索引,e.g. "name"、['name','count']
+    如为 None 则为默认索引（0-n）
+    默认分区值（如dic中有对应属性则为对应属性值）为索引
+    
+
+    
+    Raises
+    ------
+    Exception
+        二者的shape需一致
+
+    Returns
+    -------
+    所需统计值的dataframe
+
+    '''
+    
+    
+    src = np.array(src_in)
+    dst = np.array(dst_in)
+    
+    assert src.shape == dst.shape ,'输入矩阵与分区矩阵形状不同\narr_in:%s\ndst_in:%s'%(src.shape, dst.shape)
+    
+    
+    stats = [stats] if isinstance(stats, str) else stats
+    
+    
+    
+    df_src = pd.DataFrame(src.reshape((-1,1)))
+    df_dst = pd.DataFrame(dst.reshape((-1,1)))
+    
+    
+    # df_return = pd.DataFrame(index=(['name','count']+stats))
+    df_return = pd.DataFrame()
+    
+    areas = areas if not (areas is []) else list(df_dst[0].unique())
+    
+    if len(areas) >= 1000:
+        warnings.warn('\n分区数为%d,分区数据可能为连续数据'%len(areas))
+    
+    
+    dic = dic if bool(dic) else {}
+    for area in areas:
+        
+        serice = pd.Series(dtype='float64')
+        
+        serice['name'] = dic.get(area,area)
+
+        virtual = df_src[df_dst[0].isin([area])]
+        value = virtual.agg(stats,axis=0)  # isin()解决np.nan不被 == 检索问题
+
+        serice = pd.concat([serice,value])
+        df_return = pd.concat([df_return,serice],axis=1)
+    
+    df_return = df_return.T
+
+    if index is None:
+        df_return.reset_index(drop=True,inplace=True)
+    else:
+        df_return.set_index(keys=index,drop=True,inplace=True)
+    
+    return df_return
+    
+    
+    
+    
+    
+    
+    
+    
+    
+def count(arr):
+    arr = np.array(arr)
+    
+    x= arr[~np.isnan(arr)]
+    
+    return len(x)
+    
+    
+    
+    
+
+    
+    
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # nnan = []
 def get_num(x,lst_and = []):   
     x = str(x) + '/'
@@ -137,9 +267,9 @@ def get_num(x,lst_and = []):
 #         dill.dump(data,f)
 
 
-
-
 # -----------------------------------------------------------------------------------------
+
+
 
 def isiterable(x):
     

@@ -179,10 +179,9 @@ def check(raster_in,
                  \n--->dst : {cd.wlen(dst_attrs[i],w_len,10)}') 
          for i in range(len(attrnames)) if attrnames[i] in diffe]
         
-    if diffe == []:
-        return True,[]
-    else:
-        return False,diffe
+    judge = True if diffe == [] else False
+    
+    return judge,diffe
     
 
 
@@ -192,7 +191,7 @@ def copy_raster(raster_in, out_path):
     
 
 
-def check_flip(src,n=1):
+def check_flip(src, n=1):
     bounds = src.bounds
     if bounds[1] > bounds[3]:
         bounds = [bounds[0],bounds[3],bounds[2],bounds[1]]
@@ -443,23 +442,6 @@ def renan(raster_in, dst_in=None, nan=np.nan, dtype=np.float32, get_ds=True, out
     arr, profile = read(raster_in=raster_in,n=2,tran=False, get_df=False,nan=nan,dtype=dtype)
     
     return _return(out_path=out_path, get_ds=get_ds, arr=arr, profile=profile)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -1032,7 +1014,7 @@ def clip(raster_in,
 
 
 
-def zonal(raster_in, dst_in, stats, dic=None):
+def zonal(raster_in, dst_in, stats, areas=[], dic=None, index='name',get_table=True,get_ds=False):
     '''
     分区统计
     栅格统计栅格
@@ -1047,9 +1029,20 @@ def zonal(raster_in, dst_in, stats, dic=None):
     stats : 
        统计类型。基于df.agg(stats) .e.g. 'mean' or ['mean','sum','max']...
     
+    areas : 
+        需要统计的分区，为[]时都统计，默认都统计
     
     dic : dict
         分区数据栅格各值对应属性
+    
+    index : list,str
+    设置表格的索引,e.g. "name"、['name','count']
+    如为 None 则为默认索引（0-n）
+    默认分区值（如dic中有对应属性则为对应属性值）为索引
+    
+    get_table、get_ds:
+        获得表格、获得栅格数据（DatasetWriter）
+        默认只获得表格，可以任意获得
     
     Raises
     ------
@@ -1059,7 +1052,7 @@ def zonal(raster_in, dst_in, stats, dic=None):
 
     Returns
     -------
-    所需统计值的dataframe
+    所需统计值的dataframe，与统计stats对应的栅格数据（数量、意义）
 
     '''
     
@@ -1077,13 +1070,17 @@ def zonal(raster_in, dst_in, stats, dic=None):
         mis += '\n\n----<请统一以上属性>'
         raise Exception(mis)
     
+    stats = [stats] if isinstance(stats, str) else stats
+    
+    
     
     df_src = read(raster_in=src, n=1)
     df_dst = read(raster_in=dst, n=1)
     
-    df_return = pd.DataFrame(index=(['name']+stats))
     
-    areas = list(df_dst[0].unique())
+    df_return = pd.DataFrame()
+    
+    areas = areas if not (areas is []) else list(df_dst[0].unique())
     
     if len(areas) >= 1000:
         warnings.warn('\n分区数为%d,分区栅格可能为浮点型栅格'%len(areas))
@@ -1092,15 +1089,52 @@ def zonal(raster_in, dst_in, stats, dic=None):
     dic = dic if bool(dic) else {}
     for area in areas:
         
-        serice = pd.Series(dtype='float64')
+        virtual = df_src[df_dst[0].isin([area])]
+        values = virtual.agg(stats,axis=0)  # isin()解决np.nan不被 == 检索问题
         
-        serice['name'] = dic.get(area,area)
+        if get_table:
+            serice = pd.Series(dtype='float64')
+            serice['name'] = dic.get(area,area)
+            serice = pd.concat([serice,values])
+            df_return = pd.concat([df_return,serice],axis=1)
+        
+        if get_ds:
 
-
-        value = df_src[df_dst[0].isin([area])].agg(stats,axis=0)  # isin()解决np.nan不被 == 检索问题
-        serice = pd.concat([serice,value])
-        df_return = pd.concat([df_return,serice],axis=1)
-    return df_return.T
+            for stat in values.index:
+                
+                if f'df_{stat}' not in locals().keys():
+                    locals()[f'df_{stat}'] = df_src*np.nan
+                
+                locals()[f'df_{stat}'][df_dst[0].isin([area])] = values.loc[stat,0]
+                
+                
+        
+    results = []
+    if get_table:
+        df_return = df_return.T
+        if index is None:
+            df_return.reset_index(drop=True,inplace=True)
+        else:
+            df_return.set_index(keys=index,drop=True,inplace=True)
+        
+        results.append(df_return)
+    
+    if get_ds:
+        profile = src.profile
+        profile['nodata'] = np.nan
+        for stat in values.index:
+            dfn = locals()[f'df_{stat}']
+            shape = (profile['count'], profile['height'], profile['width'])
+            arr = np.array(dfn).reshape(shape)
+            ds = create_raster(**profile)
+            ds.write(arr)
+            
+            results.append(ds)
+    return results if len(results) != 1 else results[0]
+            
+            
+            
+            
 
 
 

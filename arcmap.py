@@ -6,6 +6,8 @@ Created on Sat 2023/6/19 19:42
 
 import os, sys, re, time, warnings, inspect, pathlib, math
 from functools import partial
+from concurrent.futures import ProcessPoolExecutor,ThreadPoolExecutor
+import threading
 
 import pandas as pd
 import numpy as np
@@ -25,6 +27,7 @@ _rasters = [rasterio.io.DatasetReader,rasterio.io.DatasetWriter,rasterio.io.Memo
 
 class raster():
     pass
+
 
 def create_raster(**kwargs):
     memfile = rasterio.MemoryFile()
@@ -123,7 +126,8 @@ def add_attrs_raster(src, ds={}, **kwargs):
 def check(raster_in,
           dst_in=None, dst_attrs=None,
           args=(), need=None,
-          printf=False,w_len=75):
+          printf=False, Raise = None,
+          w_len=75):
     '''
     检验栅格数据是否统一
     (空间参考、范围、栅格行列数)
@@ -140,11 +144,16 @@ def check(raster_in,
         DESCRIPTION.
     dst_in : TYPE
         DESCRIPTION.
+        
+    printf : bool
+        是否打印比较对象的不同属性值
 
     Returns
     -------
-    True or False,
-    不同属性的列表
+    judge : bool
+        比较的属性是否一致
+    diffe : list
+        不一致属性的列表
     
 
     '''
@@ -172,17 +181,81 @@ def check(raster_in,
     
     if printf:
         # 规范打印
-        [print(f'\n{"-"*w_len}\
-                 \n{("<"+attrnames[i]+">"):-^{w_len}}\
-                 \n--->src : {cd.wlen(src_attrs[i],w_len,10)}\
-                 \n-\
-                 \n--->dst : {cd.wlen(dst_attrs[i],w_len,10)}') 
-         for i in range(len(attrnames)) if attrnames[i] in diffe]
+        message = '以下属性不一致\n'
+        for i in range(len(attrnames)):
+            if attrnames[i] in diffe:
+                message += (f'\n{"-"*w_len}\
+                            \n{("<"+attrnames[i]+">"):-^{w_len}}\
+                            \n--->src : {cd.wlen(src_attrs[i],w_len,10)}\
+                            \n-\
+                            \n--->dst : {cd.wlen(dst_attrs[i],w_len,10)}\n')
+                          
+        
+        if Raise in ('w','e'):
+            Raise = Exception if Raise == 'e' else Warning
+        
+        
+        if Raise is None:
+            print(message)
+        elif issubclass(Raise, Warning) :
+            warnings.warn(message,category=Raise)
+        elif issubclass(Raise, Exception):
+            raise Raise(message)
+        
+            
         
     judge = True if diffe == [] else False
     
     return judge,diffe
     
+
+
+def check_all(*rasters,args=(), need=None):
+    '''
+    比较栅格集的属性是否一致
+    默认比较是否统一(空间参考、范围、栅格行列数)
+
+    Parameters
+    ----------
+    *rasters : TYPE
+        栅格集
+    need : 完全自定义比较属性
+    args : 在空间参考、范围、栅格行列数基础上添加其他需要比较的属性
+
+
+
+    Returns
+    -------
+    bool
+        返回bool值，表示是否一致
+
+    '''
+    # 获得首个栅格元素作为目标值
+    dst = cd.get_first(rasters,e_class=str)
+    
+    # 定义一个特定的错误来跳出compare的循环，便于try捕捉
+    class false(Exception):...
+    def compare(rasters):
+        '''将rasters中的每个元素都于首个元素dst比较'''
+        if cd.isiterable(rasters) & ~isinstance(rasters, str):
+            [compare(x) for x in rasters]
+        else:
+            judge,diffe = check(rasters,dst,args=args, need=need)
+            if judge:
+                return True
+            else:
+                raise false  # 以false错误退出函数
+        # 前面正常运行则全部相等
+        return True
+            
+    try:
+        return compare(rasters)
+    except false:  # 捕捉false
+        return False
+    except Exception as e:
+        raise e
+    
+
 
 
 def copy_raster(raster_in, out_path):
@@ -400,10 +473,6 @@ def out_ds(ds, out_path):
         src.write(arr)
 
 
-
-
-
-
 def renan(raster_in, dst_in=None, nan=np.nan, dtype=np.float32, get_ds=True, out_path=None):
     '''
     替换无效值
@@ -442,10 +511,6 @@ def renan(raster_in, dst_in=None, nan=np.nan, dtype=np.float32, get_ds=True, out
     arr, profile = read(raster_in=raster_in,n=2,tran=False, get_df=False,nan=nan,dtype=dtype)
     
     return _return(out_path=out_path, get_ds=get_ds, arr=arr, profile=profile)
-
-
-
-
 
 
 
@@ -1014,7 +1079,7 @@ def clip(raster_in,
 
 
 
-def zonal(raster_in, dst_in, stats, areas=[], dic=None, index='name',get_table=True,get_ds=False):
+def zonal(raster_in, dst_in, stats, areas=[], dic=None, index='area',get_ds=None):
     '''
     分区统计
     栅格统计栅格
@@ -1056,6 +1121,10 @@ def zonal(raster_in, dst_in, stats, areas=[], dic=None, index='name',get_table=T
 
     '''
     
+
+
+    
+    assert isinstance(stats, (list,tuple)) , '请保证stats是一个list或tuple'
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
     dst = rasterio.open(dst_in) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
     
@@ -1070,8 +1139,7 @@ def zonal(raster_in, dst_in, stats, areas=[], dic=None, index='name',get_table=T
         mis += '\n\n----<请统一以上属性>'
         raise Exception(mis)
     
-    stats = [stats] if isinstance(stats, str) else stats
-    
+    # stats = [stats] if isinstance(stats, str) else stats
     
     
     df_src = read(raster_in=src, n=1)
@@ -1084,58 +1152,58 @@ def zonal(raster_in, dst_in, stats, areas=[], dic=None, index='name',get_table=T
     
     if len(areas) >= 1000:
         warnings.warn('\n分区数为%d,分区栅格可能为浮点型栅格'%len(areas))
-    
-    
-    dic = dic if bool(dic) else {}
-    for area in areas:
-        
-        virtual = df_src[df_dst[0].isin([area])]
-        values = virtual.agg(stats,axis=0)  # isin()解决np.nan不被 == 检索问题
-        
-        if get_table:
-            serice = pd.Series(dtype='float64')
-            serice['name'] = dic.get(area,area)
-            serice = pd.concat([serice,values])
-            df_return = pd.concat([df_return,serice],axis=1)
-        
-        if get_ds:
 
-            for stat in values.index:
-                
-                if f'df_{stat}' not in locals().keys():
-                    locals()[f'df_{stat}'] = df_src*np.nan
-                
-                locals()[f'df_{stat}'][df_dst[0].isin([area])] = values.loc[stat,0]
-                
-                
-        
-    results = []
-    if get_table:
-        df_return = df_return.T
-        if index is None:
-            df_return.reset_index(drop=True,inplace=True)
+    
+    dic = dic or {}
+    
+    for area in areas:
+
+        # virtual = df_src[df_dst[0].isin([area])]  # isin()解决np.nan不被 == 检索问题 ,但慢很多还是改用了条件判断
+        if area == None:
+            virtual = df_src[df_dst==area]
+        elif np.isnan(area):  # 不支持None,所以分了三段
+            virtual = df_src[df_dst[0].isna()]
         else:
-            df_return.set_index(keys=index,drop=True,inplace=True)
-        
-        results.append(df_return)
+            virtual = df_src[df_dst==area]
+            
+        stats_values = virtual.agg(stats,axis=0)
+        stats_values.columns = [area]
+        df_return = pd.concat([df_return,stats_values],axis=1)
+    
+
+    df_return = df_return.T
+    # df_return.set_index('area',inplace=True)
+    
+    results = []
+    
+    
     
     if get_ds:
         profile = src.profile
         profile['nodata'] = np.nan
-        for stat in values.index:
-            dfn = locals()[f'df_{stat}']
-            shape = (profile['count'], profile['height'], profile['width'])
-            arr = np.array(dfn).reshape(shape)
+        get_ds = get_ds if isinstance(get_ds, (list,tuple)) else list(df_return.columns)
+        shape = (profile['count'], profile['height'], profile['width'])
+        for idx in get_ds:
+            df_ds = df_src*np.nan  # 初始化等长df
+            dfn = df_return[idx]
+            for i in areas:
+                df_ds[df_dst[0] == i] = dfn.loc[i]
+            arr = np.array(df_ds).reshape(shape)
             ds = create_raster(**profile)
             ds.write(arr)
-            
             results.append(ds)
+    
+
+    df_return.reset_index().rename(columns={"index":"area"})
+    
+    if index:
+        df_return.set_index(keys=index,drop=True,inplace=True)
+    
+    results.insert(0, df_return)
+    
+
     return results if len(results) != 1 else results[0]
             
-            
-            
-            
-
 
 
 def three_sigma(raster_in,dst_in=None,out_path=None, get_ds=True):
@@ -1208,11 +1276,6 @@ def three_sigma(raster_in,dst_in=None,out_path=None, get_ds=True):
             # df_src[(df_x[0] < mean - 3 * std) | (df_x[0] > mean + 3 * std)] = np.nan
     
     return _return(out_path, get_ds, arr=df_src, profile=profile)
-
-
-
-
-
 
 
 @unrepe(src='raster_in',attrs=['crs','Bounds','raster_size'],dst='dst_in',moni_args=['run_how'],moni_kwargs={'Extract':(0,False,None,(),{},'')},return_and_dict=(_return,{'ds':'raster_in'},{}))
@@ -1482,7 +1545,7 @@ def mask(raster_in,
 
 """
 
-def zonal_u(raster_in, dst_in, stats, areas=[], dic=None, index='name',get_table=True,get_ds=False,**kwargs):
+def zonal_u(raster_in, dst_in, stats,dic=None,**kwargs):
     '''
     分区统计
     含临时统一操作
@@ -1510,7 +1573,7 @@ def zonal_u(raster_in, dst_in, stats, areas=[], dic=None, index='name',get_table
     '''
     
     ds = unify(raster_in = dst_in, dst_in = raster_in, out_path=None, **kwargs)
-    return zonal(raster_in=raster_in,dst_in=ds, stats=stats,areas=areas,dic=dic,index=index,get_table=get_table,get_ds=get_ds)
+    return zonal(raster_in=raster_in,dst_in=ds, stats=stats,dic=dic)
        
  
 
@@ -1533,24 +1596,28 @@ if __name__ == '__main__':
     
     out_path1 = r'F:\PyCharm\pythonProject1\arcmap\015温度\zonal\grand_average.xlsx'
 
-    src = rasterio.open(raster_in)
+
+
+    x = check_all(raster_in,dst_in)
+    src = rasterio.open()
     # check(raster_in,dst_in=dst_in,printf=1,w_len=80)
     # df = zonal_u(raster_in=dst_in, dst_in=raster_in, stats = ['sum','max','min'])
     # src.dtypes
-    dst = unify(raster_in,dst_in)
-    ds = three_sigma(dst_in,dst)
+    # dst = unify(raster_in,dst_in)
+    # ds = three_sigma(dst_in,dst)
     # out_ds(ds, out_path)
     
     
+    # ws = src.read()
+    # w = src.block_window(1,0,0)
     
+    # list(ws)
     
+    # # src.block_shapes = [(1368/2,1728/2)]
     
-    
-    
-    
-    
-    
-    
+    # from sys import getsizeof as getsize
+    # var = object()
+    # print(getsize(ws))
     
     
     # s = time.time()

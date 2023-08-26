@@ -10,7 +10,9 @@ import numpy as np
 import pandas as pd
 import sys
 import warnings
+import traceback
 from typing import overload, Sequence, Iterator
+from concurrent.futures import ProcessPoolExecutor,ThreadPoolExecutor
 from functools import partial,wraps
 
 def wlen(x,n:int,f_len:int=0,f_str:str =None):
@@ -108,7 +110,7 @@ def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
         输入栅格
     dst_in : TYPE
         分区数据栅格
-    stats : 
+    stats : list or tuple
        统计类型。基于df.agg(stats) .e.g. 'mean' or ['mean','sum','max']...
     areas : 
         需要统计的分区，为[]时都统计，默认都统计
@@ -126,6 +128,7 @@ def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
     ------
     Exception
         二者的shape需一致
+        
 
     Returns
     -------
@@ -133,14 +136,23 @@ def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
 
     '''
     
+    def agg(area):
+        serice = pd.Series({'name':dic.get(area,area)})
+        virtual = df_src[df_dst[0].isin([area])]  # isin()解决np.nan不被 == 检索问题
+        value = virtual.agg(stats,axis=0)
+        serice = pd.concat([serice,value])
+        return serice
     
+    
+    assert isinstance(stats, (list,tuple)) , '请保证stats是一个list或tuple'
     src = np.array(src_in)
     dst = np.array(dst_in)
     
     assert src.shape == dst.shape ,'输入矩阵与分区矩阵形状不同\narr_in:%s\ndst_in:%s'%(src.shape, dst.shape)
     
     
-    stats = [stats] if isinstance(stats, str) else stats
+    
+    # stats = [stats] if isinstance(stats, (str)) else stats
     
     
     
@@ -148,8 +160,6 @@ def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
     df_dst = pd.DataFrame(dst.reshape((-1,1)))
     
     
-    # df_return = pd.DataFrame(index=(['name','count']+stats))
-    df_return = pd.DataFrame()
     
     areas = areas if not (areas is []) else list(df_dst[0].unique())
     
@@ -157,18 +167,32 @@ def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
         warnings.warn('\n分区数为%d,分区数据可能为连续数据'%len(areas))
     
     
-    dic = dic if bool(dic) else {}
+    dic = dic or {}
+    # df_return = pd.DataFrame(index=(['name']+stats))
+    df_return = pd.DataFrame()
+    
+    ## 多线程 ,thread_count=None,如果使用加上这个参数，换掉下面的循环，不过数据量要很大才会有明显效果，我4000*4000的矩阵，8个分区，好像都影响不大
+    ## thread_count = None
+    # pool = ThreadPoolExecutor(thread_count)
+    # pl_rst = pool.map(agg, areas) # 多线程
+    # # pl_rst = [agg(area) for area in areas] # 循环
+    # df_return = pd.concat(pl_rst,axis=1)
+    
+    #循环
     for area in areas:
-        
-        serice = pd.Series(dtype='float64')
-        
-        serice['name'] = dic.get(area,area)
-
-        virtual = df_src[df_dst[0].isin([area])]
-        value = virtual.agg(stats,axis=0)  # isin()解决np.nan不被 == 检索问题
-
+        serice = pd.Series({'name':dic.get(area,area)})
+        # virtual = df_src[df_dst[0].isin([area])]  # isin()解决np.nan不被 == 检索问题,但慢很多还是改用了条件判断
+        if area == None:
+            virtual = df_src[df_dst==area]
+        elif np.isnan(area):
+            virtual = df_src[df_dst[0].isna()]
+        else:
+            virtual = df_src[df_dst==area]
+        value = virtual.agg(stats,axis=0)
         serice = pd.concat([serice,value])
+        
         df_return = pd.concat([df_return,serice],axis=1)
+    #
     
     df_return = df_return.T
 
@@ -181,12 +205,6 @@ def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
     
     
     
-    
-    
-    
-    
-    
-    
 def count(arr):
     arr = np.array(arr)
     
@@ -196,35 +214,6 @@ def count(arr):
     
     
     
-    
-
-    
-    
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # nnan = []
@@ -283,6 +272,62 @@ def isiterable(x):
         return True
     except:
         return False
+
+
+
+
+def get_first(iterable,i_class=None,e_class=None):
+    '''
+    获取嵌套可迭代对象中的第一个元素
+
+    Parameters
+    ----------
+    iterable : TYPE
+        可迭代对象.
+    
+    i_class : list, optional
+        使用的可迭代类型。
+        如果获取的元素是这个类型则会继续递归，直到检索到非i_class的元素才会返回。
+        默认使用所有可迭代类型。 The default is None.
+    
+    
+    e_class : list, optional
+        排除的可迭代类型。
+        如果检索到元素是这些类型不会继续递归，而是返回这个元素.如str有时需被排除
+        The default is None.
+
+    Returns
+    -------
+    TYPE
+        第一个元素
+
+    '''
+    if isiterable(iterable):
+        if isinstance(iterable, zip):
+            iterable = tuple(iterable)
+    else:
+        
+        raise TypeError('iterable不可迭代')
+        # return iterable  # 返回自身
+    
+    if i_class:
+        include = isinstance(iterable[0], i_class)
+    else:
+        include = isiterable(iterable[0])
+    
+    
+    if e_class:
+        exclude = isinstance(iterable[0],e_class)
+    else:
+        exclude = False
+    if include & (not exclude):
+        if iterable == iterable[0]:  # str的返回方式
+            return iterable
+        else:
+            return get_first(iterable[0])
+    else:
+        return iterable[0]
+
 
 
 

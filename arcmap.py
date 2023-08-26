@@ -240,6 +240,9 @@ def check_all(*rasters,args=(), need=None):
         if cd.isiterable(rasters) & ~isinstance(rasters, str):
             [compare(x) for x in rasters]
         else:
+            if rasters == dst:
+                return True
+            
             judge,diffe = check(rasters,dst,args=args, need=need)
             if judge:
                 return True
@@ -1598,7 +1601,7 @@ if __name__ == '__main__':
 
 
 
-    x = check_all(raster_in,dst_in)
+    x = check_all(raster_in,raster_in,dst_in)
     src = rasterio.open()
     # check(raster_in,dst_in=dst_in,printf=1,w_len=80)
     # df = zonal_u(raster_in=dst_in, dst_in=raster_in, stats = ['sum','max','min'])

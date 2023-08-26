@@ -302,31 +302,32 @@ def get_first(iterable,i_class=None,e_class=None):
         第一个元素
 
     '''
+    # 判断是否可迭代并将zip对象转tuple
     if isiterable(iterable):
         if isinstance(iterable, zip):
             iterable = tuple(iterable)
     else:
-        
         raise TypeError('iterable不可迭代')
         # return iterable  # 返回自身
     
+    # 判断是否是使用的可迭代类型，是否是排除的可迭代类型
     if i_class:
         include = isinstance(iterable[0], i_class)
     else:
         include = isiterable(iterable[0])
-    
-    
     if e_class:
         exclude = isinstance(iterable[0],e_class)
     else:
         exclude = False
+    
+    # 即时include又不是exclue则继续运行，否则返回第一个元素
     if include & (not exclude):
         if iterable == iterable[0]:  # str的返回方式
             return iterable
         else:
             return get_first(iterable[0])
     else:
-        return iterable[0]
+        return iterable[0]  # 返回第一个元素
 
 
 

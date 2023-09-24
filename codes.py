@@ -161,7 +161,7 @@ def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
     
     
     
-    areas = areas if not (areas is []) else list(df_dst[0].unique())
+    areas = areas if not (areas == []) else list(df_dst[0].unique())
     
     if len(areas) >= 1000:
         warnings.warn('\n分区数为%d,分区数据可能为连续数据'%len(areas))

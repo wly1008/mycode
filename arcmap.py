@@ -6,6 +6,7 @@ Created on Sat 2023/6/19 19:42
 
 import os, sys, re, time, warnings, inspect, pathlib, math
 from functools import partial
+from typing import overload
 from concurrent.futures import ProcessPoolExecutor,ThreadPoolExecutor
 import threading
 
@@ -21,12 +22,8 @@ from rasterio.warp import reproject as _reproject
 
 import mycode.codes as cd
 from mycode.decorator import unrepe
+from mycode._Class import raster,false
 
-
-_rasters = [rasterio.io.DatasetReader,rasterio.io.DatasetWriter,rasterio.io.MemoryFile,rasterio.vrt.WarpedVRT]
-
-class raster():
-    pass
 
 
 def create_raster(**kwargs):
@@ -80,7 +77,7 @@ def get_RasterAttr(raster_in, *args, ds={}, **kwargs):
            'values': r'src.read().astype(dtype)//ks//{"dtype":np.float64}',
            'arr': r'src.values.reshape(-1, 1)',
            'df': r'pd.DataFrame(src.values.reshape(-1, 1))',
-           #'shape_b': r"(src.count, src.height, src.width)"
+           # 'shape_b': r"(src.count, src.height, src.width)"
            'shape_b': ('count', 'height', 'width')
            }
     _getattrs = partial(cd.getattrs, **dic)
@@ -125,7 +122,7 @@ def add_attrs_raster(src, ds={}, **kwargs):
 
 def check(raster_in,
           dst_in=None, dst_attrs=None,
-          args=(), need=None,
+          args=None, need=None,
           printf=False, Raise = None,
           w_len=75):
     '''
@@ -160,6 +157,7 @@ def check(raster_in,
     if need:
         attrnames = need
     else:
+        args = args or ()
         attrnames = ['crs', 'Bounds', 'raster_size'] + [i for i in args if not(i in ['crs', 'Bounds', 'raster_size'])]
     src_attrs = get_RasterAttr(raster_in, attrnames)
 
@@ -175,11 +173,9 @@ def check(raster_in,
         raise Exception('dst_in,dst_attrs必须输入其中一个')
     
     
-    
-    
     diffe = [attrnames[i] for i in range(len(attrnames)) if src_attrs[i] != dst_attrs[i]]
     
-    if printf:
+    if printf or Raise:
         # 规范打印
         message = '以下属性不一致\n'
         for i in range(len(attrnames)):
@@ -193,14 +189,15 @@ def check(raster_in,
         
         if Raise in ('w','e'):
             Raise = Exception if Raise == 'e' else Warning
-        
-        
+            
         if Raise is None:
             print(message)
         elif issubclass(Raise, Warning) :
             warnings.warn(message,category=Raise)
         elif issubclass(Raise, Exception):
             raise Raise(message)
+        else:
+            print(message)
         
             
         
@@ -217,13 +214,10 @@ def check_all(*rasters,args=(), need=None):
 
     Parameters
     ----------
-    *rasters : TYPE
+    *rasters : 
         栅格集
     need : 完全自定义比较属性
     args : 在空间参考、范围、栅格行列数基础上添加其他需要比较的属性
-
-
-
     Returns
     -------
     bool
@@ -233,8 +227,6 @@ def check_all(*rasters,args=(), need=None):
     # 获得首个栅格元素作为目标值
     dst = cd.get_first(rasters,e_class=str)
     
-    # 定义一个特定的错误来跳出compare的循环，便于try捕捉
-    class false(Exception):...
     def compare(rasters):
         '''将rasters中的每个元素都于首个元素dst比较'''
         if cd.isiterable(rasters) & ~isinstance(rasters, str):
@@ -318,7 +310,13 @@ def _return(out_path=None,get_ds=True,arr=None,profile=None,ds=None):
         return arr,profile
 
 
-def window(raster_in, shape):
+
+
+
+
+
+
+def window(raster_in, shape=None, size=None, step=None, initial_offset=None):
     '''
     
 
@@ -328,7 +326,30 @@ def window(raster_in, shape):
         栅格数据或栅格地址
     shape : tuple
           (height,width)
-        分割为 height*width个窗口
+        分割为 height*width个窗口, 未除尽的并入末端窗口
+    size : int、float or tuple
+          (ysize,xsize)
+        窗口的尺寸大小，多余的会生成独立的小窗口不会并入前一个窗口
+        
+    step : tuple or int
+          (ystep,xstep)
+        生成滑动窗口
+        为滑动步进
+        shape、size参数都可以与之配合使用，这里的shape代表了窗口的尺寸为总长、宽除以shape的向下取整。
+        e.g.
+        src.shape = (20,20)
+        shape:(3,3) == size:(6,6)
+        末端窗口按正常步进滑动，如有超出会剔除多余部分
+        如填int类型，ystep = xstep = step;
+        如tuple中存在None,则相应的维度取消滑动，或者说滑动步进等于窗口尺寸。
+        e.g.
+        3 -> (3,3)
+        (3,None) -> (3,xsize)
+        (None,3) -> (ysize,3)
+        
+    initial_offset : tuple
+                    (initial_offset_x, initial_offset_y)
+        初始偏移量,默认为(0,0)
 
     Returns
     -------
@@ -339,27 +360,88 @@ def window(raster_in, shape):
 
     '''
 
+    assert shape or size, '请填入shape or size'
+    assert not (shape and size), 'shape 与 size只填其中一个'
+    # assert not(step) or (step and size), "请填入滑动窗口大小 size参数"
     
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
     
-    xsize, xend = divmod(src.width, shape[1])
-    ysize, yend = divmod(src.height, shape[0])
+    if size:
+        if isinstance(size, (int ,float)):
+            xsize = size
+            ysize = size
+        else:
+            ysize, xsize = size
+        xend = src.width % xsize or xsize
+        yend = src.height % ysize or ysize
+        
+        
+        s0 = int(np.ceil(src.height / ysize))
+        s1 = int(np.ceil(src.width / xsize))
+        shape = (s0, s1)
+        
+    else:
+        xsize, xend0 = divmod(src.width, shape[1])
+        ysize, yend0 = divmod(src.height, shape[0])
+        xend = xsize + xend0
+        yend = ysize + yend0
     
-    y_off = 0
-    inxs = []
+    
+    # 生成滑动窗口
+    if step:
+        
+        # 获取x、y 步进
+        if isinstance(step, int):
+            xstep = step
+            ystep = step
+        else:
+            xstep = step[1] or xsize
+            ystep = step[0] or ysize
+        # 步进过大，存在缝隙
+        if xstep > xsize:
+            warnings.warn('步进大于窗口尺寸：xstep > xsize')
+        if ystep > ysize:
+            warnings.warn('步进大于窗口尺寸：ystep > ysize')
+        
+        # 计算窗口数
+        s00, yend0 = divmod(src.height - ysize, ystep)
+        s10, xend0 = divmod(src.width - xsize, xstep)
+        
+        s0 = int(s00+1 if yend0 == 0 else s00+2)
+        s1 = int(s10+1 if yend0 == 0 else s10+2)
+        shape = (s0, s1)
+        
+        # 末端窗口修减
+        # yend = ysize if (src.height - ysize) % ystep == 0 else (ysize - ((ystep - (src.height - ysize) % ystep)))
+        yend = ysize - (ystep - (yend0 or ystep))
+        xend = xsize - (xstep - (xend0 or xstep))
+
+    else:
+        # 规范变量
+        xstep = None
+        ystep = None
+    
+    
+    
+    
+    initial_offset_x, initial_offset_y = initial_offset or (0,0)  # 初始偏移量
+    
+    y_off = initial_offset_y  # y初始坐标
+    
+    inxs = []  # 窗口位置索引（在shape中）
     # inx = {}
     windows = []
     for y_inx,ax0 in enumerate(range(shape[0])):
         
-        x_off = 0
-        height = ysize + yend if ax0 == (shape[0] - 1) else ysize
+        x_off = initial_offset_x
+        height = yend if ax0 == (shape[0] - 1) else ysize 
         for x_inx,ax1 in enumerate(range(shape[1])):
 
-            width = xsize + xend if ax1 == (shape[1] - 1) else xsize
+            width = xend if ax1 == (shape[1] - 1) else xsize
             windows.append(Window(x_off, y_off, width, height))
             
             '''
-            
+            # 窗口位置索引（在输入栅格矩阵中）
             start = x_off
             end = x_off + width
             inx['x'] = (start, end)
@@ -372,9 +454,9 @@ def window(raster_in, shape):
             '''
             inxs.append((y_inx,x_inx))
             
-            x_off += width
+            x_off += xstep or width
         
-        y_off += height
+        y_off += ystep or height
 
     return windows, inxs
 
@@ -408,7 +490,7 @@ def read(raster_in:raster,
     """
     
 
-    assert n in (1,2,3)
+    assert n in (1,2,3), 'n = 1 or 2 or 3'
 
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
     arr = src.read().astype(dtype)
@@ -432,6 +514,7 @@ def read(raster_in:raster,
                 else np.array(df).reshape(shape))    
     # 返回
     return (data, profile, shape)[:n] if n != 1 else data 
+
 
 
 def out(out_path, data, profile):
@@ -480,7 +563,7 @@ def renan(raster_in, dst_in=None, nan=np.nan, dtype=np.float32, get_ds=True, out
     '''
     替换无效值
     
-    dst_in的dtype可能是字符串，不是可调用类对象，这种情况会报错
+    dst_in的dtype可能是字符串，不是可调用类对象，如果该类在numpy中没有的话会报错（不知道float对应哪个这里转成np.float64了）
     
     Parameters
     ----------
@@ -508,12 +591,42 @@ def renan(raster_in, dst_in=None, nan=np.nan, dtype=np.float32, get_ds=True, out
     
     
     nan,dtype = get_RasterAttr(dst_in,'nodata','dtype',**{'dtype':r'profile["dtype"]'}) if dst_in else nan,dtype
-    if type(dtype) is str:
-        dtype = dtype if 'np.' in dtype else 'np.' + dtype
+    if isinstance(dtype, str):
+        dtype = dtype if 'np.' in dtype else 'np.' + dtype if dtype != 'float' else 'np.float64'
         dtype = eval(dtype)
     arr, profile = read(raster_in=raster_in,n=2,tran=False, get_df=False,nan=nan,dtype=dtype)
     
     return _return(out_path=out_path, get_ds=get_ds, arr=arr, profile=profile)
+
+
+
+
+
+
+
+
+def merge():...
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -568,7 +681,17 @@ def resampling(raster_in, out_path =None, get_ds=True,
     else:返回重采样后的栅格矩阵（array）和 profile
 
     """
-
+    if isinstance(raster_in, (list,tuple)):
+        
+        if out_path is None:
+            out_path = [None for i in range(len(raster_in))]
+        if len(out_path) != len(raster_in):
+            raise Exception('输入栅格与输出路径数量不一致')
+        return [resampling(raster_in=_src,out_path=_out_path, get_ds=get_ds,
+                           re_shape=re_shape, re_scale=re_scale, re_size=re_size,
+                           how=how,printf=printf
+                           ) for _src,_out_path in zip(raster_in,out_path)]
+    
     def update():  # <<<<<<<<<更新函数
         
         if shape != out_shape:
@@ -579,9 +702,9 @@ def resampling(raster_in, out_path =None, get_ds=True,
             transform = rasterio.transform.from_bounds(*bounds, height=out_shape[1], width=out_shape[2])
 
             profile.data.update({'height': out_shape[1], 'width': out_shape[2], 'transform': transform})
-
-            resampling_how = how if isinstance(how, int) else getattr(Resampling, how)
-            data = src.read(out_shape=out_shape, resampling=resampling_how)
+            nonlocal how
+            how = how if isinstance(how, int) else getattr(Resampling, how)
+            data = src.read(out_shape=out_shape, resampling=how)
         else:
             data = src.read()
 
@@ -720,7 +843,7 @@ def reproject(raster_in, dst_in=None,
                           resolution=resolution, shape=shape) for _src,_out_path in zip(raster_in,out_path)]
     
 
-    
+    # 输入数据整理
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
     if crs:
         pass
@@ -729,15 +852,16 @@ def reproject(raster_in, dst_in=None,
     else:
         raise Exception("dst_in 和 bounds必须输入其中一个")
     
-    
+    # 如果输入栅格与目标投影一致则直接返回
     if src.crs == crs:
         _return(out_path=out_path, get_ds=get_ds, ds=src)
     
-    
     profile = src.profile
-    if len(shape) == 2:
+    if len(shape) == 2:  # 保证shape是三维的
         shape = [src.count] + list(shape)
-
+    
+    
+    
     dst_transform, dst_width, dst_height = calculate_default_transform(src.crs, crs, src.width, src.height, *src.bounds,
                                                                        resolution=resolution, dst_width=shape[2],
                                                                        dst_height=shape[1])
@@ -835,6 +959,7 @@ def extract(raster_in, dst_in,
 
     # 获得有效值掩膜
     mask_arr = dst.dataset_mask()
+    # mask_arr[np.isnan(dst.read(1))] = 0
 
     if len(mask_arr.shape) == 3:
         mask_arr = mask_arr.max(axis=0)
@@ -847,7 +972,7 @@ def extract(raster_in, dst_in,
     
     # uint格式，None无法输出
     if ('uint' in str(profile['dtype'])) & (nodata == None) :
-        profile.update({'dtype':np.float64,'nodata': np.nan})
+        profile.update({'dtype':np.float32,'nodata': np.nan})
         nodata = np.nan
     arr = src.read()
     arr = np.where(mask_arr == 0, nodata, arr)
@@ -949,6 +1074,8 @@ def clip(raster_in,
     
     xsize, ysize, bounds_src, profile, nodata = get_RasterAttr(src, 'xsize', 'ysize', 'bounds', 'profile', 'nodata')
     
+    
+    # 有些数据集是上下翻转的
     if bounds[1] > bounds[3]:
         bounds = [bounds[0],bounds[3],bounds[2],bounds[1]]
         
@@ -978,7 +1105,7 @@ def clip(raster_in,
     
     # uint格式，None无法输出
     if ('uint' in str(profile['dtype'])) & (nodata == None) :
-         profile.update({'dtype':np.float64,'nodata': np.nan})
+         profile.update({'dtype':np.float32,'nodata': np.nan})
          nodata = np.nan
 
     if inner:
@@ -1381,14 +1508,31 @@ def unify(raster_in, dst_in,
                             if k in inspect.getfullargspec(clip)[0] + inspect.getfullargspec(clip)[4]}) #接收其他参数 
         ds = clip(raster_in=ds, dst_in=dst,**kwargs_clip)
     # 重采样（行列数）
-    if ds.shape[-2:] == src.shape[-2:]:
-        return _return(out_path,get_ds,ds=ds)
+    if ds.shape[-2:] == dst.shape[-2:]:
+        return _return(out_path=out_path, get_ds=get_ds, ds=ds)
     kwargs_resapilg = {}  # 设置默认参数
     kwargs_resapilg.update({k: v for k, v in kwargs.items()
                             if k in inspect.getfullargspec(resampling)[0] + inspect.getfullargspec(resampling)[4]})  #接收其他参数 
     return resampling(raster_in=ds, out_path=out_path,how=how, get_ds=get_ds, re_shape=shape, re_size=None, re_scale=None, **kwargs_resapilg)
 
     
+
+
+
+
+
+def unify_wins(raster_in, dst_in,
+              out_path=None, get_ds=True,
+              Extract=False, how='mode',run_how=None,
+              **kwargs):
+    pass
+
+
+
+
+
+
+
 
 
 
@@ -1548,7 +1692,7 @@ def mask(raster_in,
 
 """
 
-def zonal_u(raster_in, dst_in, stats,dic=None,**kwargs):
+def zonal_u(raster_in, dst_in, stats, areas=[], dic=None, index='area',get_ds=None,**kwargs):
     '''
     分区统计
     含临时统一操作
@@ -1560,8 +1704,8 @@ def zonal_u(raster_in, dst_in, stats,dic=None,**kwargs):
         输入栅格
     dst_in : TYPE
         分区数据栅格
-    stats : 
-       统计类型。基于df.agg(stats). e.g. 'mean' or ['mean','sum','max']...
+    stats : list or tuple
+       统计类型。基于df.agg(stats). e.g. ['mean'] or ['mean','sum','max']...
     
     dic : dict
         分区数据栅格各值对应属性，默认为值本身
@@ -1575,8 +1719,8 @@ def zonal_u(raster_in, dst_in, stats,dic=None,**kwargs):
 
     '''
     
-    ds = unify(raster_in = dst_in, dst_in = raster_in, out_path=None, **kwargs)
-    return zonal(raster_in=raster_in,dst_in=ds, stats=stats,dic=dic)
+    ds = unify(raster_in = dst_in, dst_in = raster_in, out_path=None,get_ds=True, **kwargs)
+    return zonal(raster_in=raster_in,dst_in=ds, stats=stats,area=areas,dic=dic,index=index,get_ds=get_ds)
        
  
 
@@ -1591,6 +1735,7 @@ def zonal_u(raster_in, dst_in, stats,dic=None,**kwargs):
 
 
 if __name__ == '__main__':
+    # sys.exit(0)
     raster_in = r'F:/PyCharm/pythonProject1/arcmap/015温度/土地利用/landuse_4y/1990-5km-tiff.tif'
 
     dst_in = r'F:\PyCharm\pythonProject1\arcmap\007那曲市\data\eva平均\eva_2.tif'
@@ -1600,9 +1745,45 @@ if __name__ == '__main__':
     out_path1 = r'F:\PyCharm\pythonProject1\arcmap\015温度\zonal\grand_average.xlsx'
 
 
-
-    x = check_all(raster_in,raster_in,dst_in)
-    src = rasterio.open()
+    # x = check_all(raster_in,raster_in,dst_in)
+    src = rasterio.open(raster_in)
+    windows, ids = window(src,size=200,step=1)
+    windows1, ids1 = window(src,size=200,step=None)
+    # os.chdir(r'F:/Python/pythonlx/9 tif_mean')
+    # x = rasterio.band(src,1)
+    # pro = src.profile
+    # src.checksum(1)
+    # src.lnglat()
+    # src.files
+    # src.overviews(1)
+    # src.window_bounds()
+    # src.write_transform()
+    # # src.
+    # nodata = src.nodata
+    
+    # arr = src.read()
+    
+    # arr == nodata
+    # pro['dtype'] = 'float32'
+    
+    # ds = create_raster(**pro)
+    
+    
+    # ds.profile['dtype']
+    
+    # ds.close()
+    
+    # dst = rasterio.open(r'F:\PyCharm\pythonProject1\代码\mycode\测试文件\float2.tif','w',**pro)
+    # ds = renan(src)
+    
+    # arr = ds.read()
+    
+    # dst.profile
+    
+    
+    
+    
+    
     # check(raster_in,dst_in=dst_in,printf=1,w_len=80)
     # df = zonal_u(raster_in=dst_in, dst_in=raster_in, stats = ['sum','max','min'])
     # src.dtypes

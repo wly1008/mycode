@@ -9,9 +9,12 @@ from functools import partial
 from typing import overload
 from concurrent.futures import ProcessPoolExecutor,ThreadPoolExecutor
 import threading
+from tqdm import tqdm
+from itertools import chain
 
 import pandas as pd
 import numpy as np
+from alive_progress import alive_bar
 
 import rasterio
 import rasterio.mask
@@ -66,7 +69,8 @@ def get_RasterAttr(raster_in, *args, ds={}, **kwargs):
 
     # 此文件变量优先级高
     ds.update(globals())
-
+    
+    # 定义一些栅格属性
     dic = {'raster_size': r"(src.height, src.width)",
            'cell_size': r"(src.xsize, src.ysize)",
            # 'dtype':r"src.dtypes[0]",
@@ -137,13 +141,18 @@ def check(raster_in,
     need : 完全自定义比较属性
     args : 添加其他需要比较的属性
     
-    raster_in : TYPE
-        DESCRIPTION.
-    dst_in : TYPE
-        DESCRIPTION.
+    raster_in : raster
+        比较数据之一
+    dst_in : raster
+        比较数据之一
         
     printf : bool
         是否打印比较对象的不同属性值
+    w_len : int
+        规范打印的最大宽度
+    Raise : class or str
+        输入一个错误或警告类。或填入'e'、'w',等于Exception、Warning
+        产生一个错误或警告
 
     Returns
     -------
@@ -154,6 +163,7 @@ def check(raster_in,
     
 
     '''
+    
     if need:
         attrnames = need
     else:
@@ -186,6 +196,9 @@ def check(raster_in,
                             \n-\
                             \n--->dst : {cd.wlen(dst_attrs[i],w_len,10)}\n')
                           
+        if message == '以下属性不一致\n':
+            judge = True if diffe == [] else False
+            return judge,diffe
         
         if Raise in ('w','e'):
             Raise = Exception if Raise == 'e' else Warning
@@ -310,16 +323,66 @@ def _return(out_path=None,get_ds=True,arr=None,profile=None,ds=None):
         return arr,profile
 
 
-
-
-
-
-
-
-def window(raster_in, shape=None, size=None, step=None, initial_offset=None):
-    '''
+def get_wins(flast_inx,axis=0,
+             initial_offset=(0,0),
+             end=(), size=(), step=(),
+             shape=(),get_self_wins=False):
+    
+    windows = []
+    # 获取维度顺序
+    flast_axis = axis
+    second_axis = 1 if axis == 0 else 0
+    
+    # 窗口长度设置
+    flast_len = end[flast_axis] if flast_inx == (shape[flast_axis] - 1) else size[flast_axis] 
+    lens = [0,0]
+    lens[flast_axis] = flast_len
+    
+    # 窗口初始偏移设置
+    flast_off = flast_inx * (step[flast_axis] or flast_len)
+    second_off = initial_offset[second_axis]
+    offs = [0,0]
+    offs[flast_axis], offs[second_axis] = flast_off, second_off
+    
+    # 窗口索引设置
+    inxs = []
+    inx = [0,0]
+    inx[flast_axis] = flast_inx
     
 
+
+    if get_self_wins:
+        self_windows = []
+        self_flast_len = end[flast_axis] if flast_inx == (shape[flast_axis] - 1) else step[flast_axis]
+        self_lens = [0,0]
+        self_lens[flast_axis] = self_flast_len
+        
+    for second_inx in range(shape[second_axis]):
+        # 索引更新
+        inx[second_axis] = second_inx
+        
+        # 长度更新
+        second_len = end[second_axis] if second_inx == (shape[second_axis] - 1) else size[second_axis] 
+        lens[second_axis] = second_len
+        
+        if get_self_wins:
+            self_second_len = end[second_axis] if second_inx == (shape[second_axis] - 1) else step[second_axis]
+            self_lens[second_axis] = self_second_len
+        
+        # 获取窗口
+        windows.append(Window(*offs,*lens))
+        if get_self_wins:
+            self_windows.append(Window(*offs,*self_lens))
+        # 获取索引
+        inxs.append(inx.copy())
+        
+        # 偏移量更新
+        offs[second_axis] += step[second_axis] or second_len
+    
+    return (windows, inxs) if not get_self_wins else (windows, inxs, self_windows)
+
+def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, initial_offset=None,Tqbm=False):
+    '''
     Parameters
     ----------
     raster_in : (str or io.DatasetReader or io.DatasetWriter...(in io.py))
@@ -346,6 +409,8 @@ def window(raster_in, shape=None, size=None, step=None, initial_offset=None):
         3 -> (3,3)
         (3,None) -> (3,xsize)
         (None,3) -> (ysize,3)
+    get_self_wins : bool
+        如使用滑动窗口是否返回去覆盖后的自身窗口
         
     initial_offset : tuple
                     (initial_offset_x, initial_offset_y)
@@ -421,24 +486,65 @@ def window(raster_in, shape=None, size=None, step=None, initial_offset=None):
         xstep = None
         ystep = None
     
-    
-    
-    
     initial_offset_x, initial_offset_y = initial_offset or (0,0)  # 初始偏移量
     
-    y_off = initial_offset_y  # y初始坐标
-    
+    # 返回值变量
     inxs = []  # 窗口位置索引（在shape中）
     # inx = {}
     windows = []
+    if get_self_wins:
+        self_windows = []
+    
+    '''
+    #并行反而更慢
+    # pool = ProcessPoolExecutor(11)
+    # axis = 0
+    # func = partial(get_wins,axis=axis,initial_offset=(initial_offset_x, initial_offset_y),end=(yend,xend),size=(ysize,xsize),step=(ystep,xstep),shape=shape,get_self_wins=get_self_wins)
+    # result = list(tqdm(pool.map(func,range(shape[axis])),total=shape[axis]))
+    # if get_self_wins:
+    #     windows, inxs, self_windows = zip(*result)
+    #     self_windows = list(chain(*self_windows))
+    # else:
+    #     windows, inxs = zip(*result)
+    # windows = list(chain(*windows))
+    # inxs = list(chain(*inxs))
+
+    #循环
+    # for i in range(shape[0]):
+    #     if get_self_wins:
+    #         windows0, inxs0, self_windows0 = get_wins(i,axis=0,initial_offset=(initial_offset_x, initial_offset_y),end=(yend,xend),size=(ysize,xsize),step=(ystep,xstep),shape=shape,get_self_wins=get_self_wins)
+    #         self_windows.append(self_windows0)
+    #     else:
+    #         windows0, inxs0 = get_wins(i,axis=0,initial_offset=(initial_offset_x, initial_offset_y),end=(yend,xend),size=(ysize,xsize),step=(ystep,xstep),shape=shape,get_self_wins=get_self_wins)
+    #     windows.append(windows0)
+    #     inxs.append(inxs0)
+    
+    # windows = list(chain(*windows))
+    # inxs = list(chain(*inxs))
+    # if get_self_wins:
+    #     self_windows = list(chain(*self_windows))
+    '''
+    # with tqdm(total=shape[0]*shape[1]) as pbar:
+    if Tqbm:
+        pbar = tqdm(total=shape[0]*shape[1])
+    pbar.set_description('生成窗口')
+    y_off = initial_offset_y  # y初始坐标
     for y_inx,ax0 in enumerate(range(shape[0])):
         
         x_off = initial_offset_x
         height = yend if ax0 == (shape[0] - 1) else ysize 
+        if get_self_wins:
+            self_height = yend if ax0 == (shape[0] - 1) else ystep
+            
         for x_inx,ax1 in enumerate(range(shape[1])):
 
             width = xend if ax1 == (shape[1] - 1) else xsize
+            if get_self_wins:
+                self_width = xend if ax1 == (shape[1] - 1) else xstep
+            
             windows.append(Window(x_off, y_off, width, height))
+            if get_self_wins:
+                self_windows.append(Window(x_off, y_off, self_width, self_height))
             
             '''
             # 窗口位置索引（在输入栅格矩阵中）
@@ -455,10 +561,19 @@ def window(raster_in, shape=None, size=None, step=None, initial_offset=None):
             inxs.append((y_inx,x_inx))
             
             x_off += xstep or width
+            if Tqbm:
+                pbar.update(1)
+
         
         y_off += ystep or height
+    if Tqbm:
+        pbar.close()
 
-    return windows, inxs
+    return (windows, inxs) if not get_self_wins else (windows, inxs, self_windows)
+
+
+
+
 
 
 def read(raster_in:raster,
@@ -611,25 +726,6 @@ def merge():...
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def resampling(raster_in, out_path =None, get_ds=True,
                re_shape=None, re_scale=None, re_size=None, how='mode', printf=False):
     """
@@ -711,7 +807,7 @@ def resampling(raster_in, out_path =None, get_ds=True,
         return data
 
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
-
+    
     # 取出所需参数
     nodata, profile, count, height, width, bounds= get_RasterAttr(src, *(
         'nodata', 'profile', 'count', 'height', 'width', 'bounds'))
@@ -1209,7 +1305,7 @@ def clip(raster_in,
 
 
 
-def zonal(raster_in, dst_in, stats, areas=[], dic=None, index='area',get_ds=None):
+def zonal(raster_in, dst_in, stats, areas=None, dic=None, index='area',get_ds=None):
     '''
     分区统计
     栅格统计栅格
@@ -1225,7 +1321,7 @@ def zonal(raster_in, dst_in, stats, areas=[], dic=None, index='area',get_ds=None
        统计类型。基于df.agg(stats) .e.g. 'mean' or ['mean','sum','max']...
     
     areas : 
-        需要统计的分区，为[]时都统计，默认都统计
+        需要统计的分区，为None时都统计，默认都统计
     
     dic : dict
         分区数据栅格各值对应属性
@@ -1278,7 +1374,7 @@ def zonal(raster_in, dst_in, stats, areas=[], dic=None, index='area',get_ds=None
     
     df_return = pd.DataFrame()
     
-    areas = areas if not (areas is []) else list(df_dst[0].unique())
+    areas = areas or list(df_dst[0].unique())
     
     if len(areas) >= 1000:
         warnings.warn('\n分区数为%d,分区栅格可能为浮点型栅格'%len(areas))
@@ -1302,6 +1398,9 @@ def zonal(raster_in, dst_in, stats, areas=[], dic=None, index='area',get_ds=None
     
 
     df_return = df_return.T
+    if len(df_return.columns) == 1:
+        stat_names = [stat if isinstance(stat, str) else stat.__name__ for stat in stats]
+        df_return.loc[:,stat_names] = np.nan
     # df_return.set_index('area',inplace=True)
     
     results = []
@@ -1515,10 +1614,6 @@ def unify(raster_in, dst_in,
                             if k in inspect.getfullargspec(resampling)[0] + inspect.getfullargspec(resampling)[4]})  #接收其他参数 
     return resampling(raster_in=ds, out_path=out_path,how=how, get_ds=get_ds, re_shape=shape, re_size=None, re_scale=None, **kwargs_resapilg)
 
-    
-
-
-
 
 
 def unify_wins(raster_in, dst_in,
@@ -1526,12 +1621,6 @@ def unify_wins(raster_in, dst_in,
               Extract=False, how='mode',run_how=None,
               **kwargs):
     pass
-
-
-
-
-
-
 
 
 
@@ -1747,8 +1836,9 @@ if __name__ == '__main__':
 
     # x = check_all(raster_in,raster_in,dst_in)
     src = rasterio.open(raster_in)
-    windows, ids = window(src,size=200,step=1)
-    windows1, ids1 = window(src,size=200,step=None)
+    windows, ids, self_windows = window(r'F:\PyCharm\pythonProject1\代码\008并行分窗口\20230819\lst2000\LSTD1_2000.tif',
+                                        size=200,step=1,get_self_wins=True,Tqbm=1)
+    # windows1, ids1 = window(src,size=200,step=None)
     # os.chdir(r'F:/Python/pythonlx/9 tif_mean')
     # x = rasterio.band(src,1)
     # pro = src.profile

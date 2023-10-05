@@ -60,7 +60,7 @@ def get_wins(flast_inx,axis=0,
 
 
 
-def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, initial_offset=None):
+def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, initial_offset=None,Tqbm=False):
     '''
     Parameters
     ----------
@@ -203,9 +203,11 @@ def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, ini
     # if get_self_wins:
     #     self_windows = list(chain(*self_windows))
     '''
-    
+    # with tqdm(total=shape[0]*shape[1]) as pbar:
+    if Tqbm:
+        pbar = tqdm(total=shape[0]*shape[1],desc='生成窗口')
     y_off = initial_offset_y  # y初始坐标
-    for y_inx,ax0 in enumerate(tqdm(range(shape[0]))):
+    for y_inx,ax0 in enumerate(range(shape[0])):
         
         x_off = initial_offset_x
         height = yend if ax0 == (shape[0] - 1) else ysize 
@@ -222,23 +224,16 @@ def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, ini
             if get_self_wins:
                 self_windows.append(Window(x_off, y_off, self_width, self_height))
             
-            '''
-            # 窗口位置索引（在输入栅格矩阵中）
-            start = x_off
-            end = x_off + width
-            inx['x'] = (start, end)
 
-            start = y_off
-            end = y_off + height
-            inx['y'] = (start, end)
-
-            inxs.append(inx.copy())
-            '''
             inxs.append((y_inx,x_inx))
             
             x_off += xstep or width
+            if Tqbm:
+                pbar.update(1)
 
         
         y_off += ystep or height
+    if Tqbm:
+        pbar.close()
 
     return (windows, inxs) if not get_self_wins else (windows, inxs, self_windows)

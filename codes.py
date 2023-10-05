@@ -59,7 +59,7 @@ def three_sigma(array,areas=None) -> np.array:
 
     Parameters
     ----------
-    array : array...
+    array : array_like
         可正常转为数组的元素
         需要操作的数组
     areas : TYPE, optional
@@ -98,8 +98,7 @@ def three_sigma(array,areas=None) -> np.array:
 
 
 
-
-def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
+def zonal(src_in, dst_in, stats, areas=None, dic=None,index=['name']):
     '''
     矩阵分区统计
     
@@ -112,8 +111,8 @@ def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
         分区数据栅格
     stats : list or tuple
        统计类型。基于df.agg(stats) .e.g. 'mean' or ['mean','sum','max']...
-    areas : 
-        需要统计的分区，为[]时都统计，默认都统计
+    areas : list or tuple
+        需要统计的分区，为None时都统计，默认都统计
     dic : dict
         分区数据栅格各值对应属性
     
@@ -160,8 +159,8 @@ def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
     df_dst = pd.DataFrame(dst.reshape((-1,1)))
     
     
-    
-    areas = areas if not (areas == []) else list(df_dst[0].unique())
+    unique = list(df_dst[0].unique())
+    areas = areas or unique
     
     if len(areas) >= 1000:
         warnings.warn('\n分区数为%d,分区数据可能为连续数据'%len(areas))
@@ -169,7 +168,7 @@ def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
     
     dic = dic or {}
     # df_return = pd.DataFrame(index=(['name']+stats))
-    df_return = pd.DataFrame()
+    # df_return = pd.DataFrame()
     
     ## 多线程 ,thread_count=None,如果使用加上这个参数，换掉下面的循环，不过数据量要很大才会有明显效果，我4000*4000的矩阵，8个分区，好像都影响不大
     ## thread_count = None
@@ -179,23 +178,28 @@ def zonal(src_in, dst_in, stats, areas=[], dic=None,index=['name']):
     # df_return = pd.concat(pl_rst,axis=1)
     
     #循环
-    for area in areas:
-        serice = pd.Series({'name':dic.get(area,area)})
-        # virtual = df_src[df_dst[0].isin([area])]  # isin()解决np.nan不被 == 检索问题,但慢很多还是改用了条件判断
-        if area == None:
-            virtual = df_src[df_dst==area]
-        elif np.isnan(area):
-            virtual = df_src[df_dst[0].isna()]
-        else:
-            virtual = df_src[df_dst==area]
-        value = virtual.agg(stats,axis=0)
-        serice = pd.concat([serice,value])
-        
-        df_return = pd.concat([df_return,serice],axis=1)
-    #
+    ls_serice = []
     
-    df_return = df_return.T
+    for area in areas :
+        
+        serice = pd.Series({'name':dic.get(area,area)})
+        if area in unique:
+            # virtual = df_src[df_dst[0].isin([area])]  # isin()解决np.nan不被 == 检索问题,但慢很多还是改用了条件判断
+            if area == None:
+                virtual = df_src[df_dst==area]
+            elif np.isnan(area):
+                virtual = df_src[df_dst[0].isna()]
+            else:
+                virtual = df_src[df_dst==area]
+            value = virtual.agg(stats,axis=0)
+            serice = pd.concat([serice,value])
+        ls_serice.append(serice)
+    df_return = pd.concat(ls_serice,axis=1).T
+    #
 
+    if len(df_return.columns) == 1:
+        stat_names = [stat if isinstance(stat, str) else stat.__name__ for stat in stats]
+        df_return.loc[:,stat_names] = np.nan
     if index is None:
         df_return.reset_index(drop=True,inplace=True)
     else:
@@ -247,13 +251,7 @@ def get_num(x,lst_and = []):
     return pd.Series(nums,index=range(1,len(nums)+1))
 
 
-# def out_pkl():
-    
-#     with open(r'F:\PyCharm\pythonProject1\代码\mycode\1.pickle','wb') as f:
-#         f.seek(0)  #定位
-#         f.truncate()   #清空文件
-#         data = [dict(globals())]
-#         dill.dump(data,f)
+
 
 
 # -----------------------------------------------------------------------------------------
@@ -320,7 +318,7 @@ def get_first(iterable,i_class=None,e_class=None):
     else:
         exclude = False
     
-    # 即时include又不是exclue则继续运行，否则返回第一个元素
+    # 即是include又不是exclue则继续运行，否则返回第一个元素
     if include & (not exclude):
         if iterable == iterable[0]:  # str的返回方式
             return iterable

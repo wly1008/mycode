@@ -1,4 +1,66 @@
-def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, initial_offset=None,Tqbm=False):
+
+def get_wins(flast_inx,axis=0,
+             initial_offset=(0,0),
+             end=(), size=(), step=(),
+             shape=(),get_self_wins=False):
+    
+    windows = []
+    # 获取维度顺序
+    flast_axis = axis
+    second_axis = 1 if axis == 0 else 0
+    
+    # 窗口长度设置
+    flast_len = end[flast_axis] if flast_inx == (shape[flast_axis] - 1) else size[flast_axis] 
+    lens = [0,0]
+    lens[flast_axis] = flast_len
+    
+    # 窗口初始偏移设置
+    flast_off = flast_inx * (step[flast_axis] or flast_len)
+    second_off = initial_offset[second_axis]
+    offs = [0,0]
+    offs[flast_axis], offs[second_axis] = flast_off, second_off
+    
+    # 窗口索引设置
+    inxs = []
+    inx = [0,0]
+    inx[flast_axis] = flast_inx
+    
+
+
+    if get_self_wins:
+        self_windows = []
+        self_flast_len = end[flast_axis] if flast_inx == (shape[flast_axis] - 1) else step[flast_axis]
+        self_lens = [0,0]
+        self_lens[flast_axis] = self_flast_len
+        
+    for second_inx in range(shape[second_axis]):
+        # 索引更新
+        inx[second_axis] = second_inx
+        
+        # 长度更新
+        second_len = end[second_axis] if second_inx == (shape[second_axis] - 1) else size[second_axis] 
+        lens[second_axis] = second_len
+        
+        if get_self_wins:
+            self_second_len = end[second_axis] if second_inx == (shape[second_axis] - 1) else step[second_axis]
+            self_lens[second_axis] = self_second_len
+        
+        # 获取窗口
+        windows.append(Window(*offs,*lens))
+        if get_self_wins:
+            self_windows.append(Window(*offs,*self_lens))
+        # 获取索引
+        inxs.append(inx.copy())
+        
+        # 偏移量更新
+        offs[second_axis] += step[second_axis] or second_len
+    
+    return (windows, inxs) if not get_self_wins else (windows, inxs, self_windows)
+
+
+
+
+def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, initial_offset=None):
     '''
     Parameters
     ----------
@@ -141,12 +203,9 @@ def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, ini
     # if get_self_wins:
     #     self_windows = list(chain(*self_windows))
     '''
-    # with tqdm(total=shape[0]*shape[1]) as pbar:
-    if Tqbm:
-        pbar = tqdm(total=shape[0]*shape[1])
-    pbar.set_description('生成窗口')
+    
     y_off = initial_offset_y  # y初始坐标
-    for y_inx,ax0 in enumerate(range(shape[0])):
+    for y_inx,ax0 in enumerate(tqdm(range(shape[0]))):
         
         x_off = initial_offset_x
         height = yend if ax0 == (shape[0] - 1) else ysize 
@@ -178,12 +237,8 @@ def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, ini
             inxs.append((y_inx,x_inx))
             
             x_off += xstep or width
-            if Tqbm:
-                pbar.update(1)
 
         
         y_off += ystep or height
-    if Tqbm:
-        pbar.close()
 
     return (windows, inxs) if not get_self_wins else (windows, inxs, self_windows)

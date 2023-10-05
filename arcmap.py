@@ -427,7 +427,7 @@ def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, ini
 
     assert shape or size, '请填入shape or size'
     assert not (shape and size), 'shape 与 size只填其中一个'
-    # assert not(step) or (step and size), "请填入滑动窗口大小 size参数"
+
     
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
     
@@ -477,7 +477,6 @@ def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, ini
         shape = (s0, s1)
         
         # 末端窗口修减
-        # yend = ysize if (src.height - ysize) % ystep == 0 else (ysize - ((ystep - (src.height - ysize) % ystep)))
         yend = ysize - (ystep - (yend0 or ystep))
         xend = xsize - (xstep - (xend0 or xstep))
 
@@ -489,45 +488,15 @@ def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, ini
     initial_offset_x, initial_offset_y = initial_offset or (0,0)  # 初始偏移量
     
     # 返回值变量
-    inxs = []  # 窗口位置索引（在shape中）
-    # inx = {}
+    inxs = []  # 窗口位置索引
+
     windows = []
     if get_self_wins:
         self_windows = []
     
-    '''
-    #并行反而更慢
-    # pool = ProcessPoolExecutor(11)
-    # axis = 0
-    # func = partial(get_wins,axis=axis,initial_offset=(initial_offset_x, initial_offset_y),end=(yend,xend),size=(ysize,xsize),step=(ystep,xstep),shape=shape,get_self_wins=get_self_wins)
-    # result = list(tqdm(pool.map(func,range(shape[axis])),total=shape[axis]))
-    # if get_self_wins:
-    #     windows, inxs, self_windows = zip(*result)
-    #     self_windows = list(chain(*self_windows))
-    # else:
-    #     windows, inxs = zip(*result)
-    # windows = list(chain(*windows))
-    # inxs = list(chain(*inxs))
 
-    #循环
-    # for i in range(shape[0]):
-    #     if get_self_wins:
-    #         windows0, inxs0, self_windows0 = get_wins(i,axis=0,initial_offset=(initial_offset_x, initial_offset_y),end=(yend,xend),size=(ysize,xsize),step=(ystep,xstep),shape=shape,get_self_wins=get_self_wins)
-    #         self_windows.append(self_windows0)
-    #     else:
-    #         windows0, inxs0 = get_wins(i,axis=0,initial_offset=(initial_offset_x, initial_offset_y),end=(yend,xend),size=(ysize,xsize),step=(ystep,xstep),shape=shape,get_self_wins=get_self_wins)
-    #     windows.append(windows0)
-    #     inxs.append(inxs0)
-    
-    # windows = list(chain(*windows))
-    # inxs = list(chain(*inxs))
-    # if get_self_wins:
-    #     self_windows = list(chain(*self_windows))
-    '''
-    # with tqdm(total=shape[0]*shape[1]) as pbar:
     if Tqbm:
-        pbar = tqdm(total=shape[0]*shape[1])
-    pbar.set_description('生成窗口')
+        pbar = tqdm(total=shape[0]*shape[1],desc='生成窗口')
     y_off = initial_offset_y  # y初始坐标
     for y_inx,ax0 in enumerate(range(shape[0])):
         
@@ -546,18 +515,7 @@ def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, ini
             if get_self_wins:
                 self_windows.append(Window(x_off, y_off, self_width, self_height))
             
-            '''
-            # 窗口位置索引（在输入栅格矩阵中）
-            start = x_off
-            end = x_off + width
-            inx['x'] = (start, end)
 
-            start = y_off
-            end = y_off + height
-            inx['y'] = (start, end)
-
-            inxs.append(inx.copy())
-            '''
             inxs.append((y_inx,x_inx))
             
             x_off += xstep or width

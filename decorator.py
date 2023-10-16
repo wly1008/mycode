@@ -72,7 +72,7 @@ def _Type_args_names(Type):
     return names
 
 
-def arg_tidy(fn,*args,full=False,**kwargs):
+def arg_tidy(fn,*args,full=True,**kwargs):
     '''
     整理输入参数，除可变参数，其余放入kwargs中
     

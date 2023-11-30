@@ -124,11 +124,11 @@ def add_attrs_raster(src, ds={}, **kwargs):
 
 
 
-def check(raster_in,
-          dst_in=None, dst_attrs=None,
+def check(src_in=None, dst_in=None,
+          src_attrs=None, dst_attrs=None,
           args=None, need=None,
           printf=False, Raise = None,
-          w_len=75):
+          w_len=65):
     '''
     检验栅格数据是否统一
     (空间参考、范围、栅格行列数)
@@ -141,11 +141,16 @@ def check(raster_in,
     need : 完全自定义比较属性
     args : 添加其他需要比较的属性
     
-    raster_in : raster
+    src_in : raster
         比较数据之一
     dst_in : raster
         比较数据之一
         
+    src_attrs : raster_attrs
+        比较的属性集之一
+    
+    dst_attrs : raster_attrs
+        比较的属性集之一
     printf : bool
         是否打印比较对象的不同属性值
     w_len : int
@@ -169,7 +174,14 @@ def check(raster_in,
     else:
         args = args or ()
         attrnames = ['crs', 'Bounds', 'raster_size'] + [i for i in args if not(i in ['crs', 'Bounds', 'raster_size'])]
-    src_attrs = get_RasterAttr(raster_in, attrnames)
+    if src_attrs:
+        if "Bounds" in attrnames:
+            src_attrs = list(src_attrs) if not isinstance(src_attrs, list) else src_attrs
+            for i in range(len(attrnames)):
+                if attrnames[i] == "Bounds":
+                    src_attrs[i] = [float(f"{n:f}") for n in src_attrs[i]]
+    elif src_in:
+        src_attrs = get_RasterAttr(src_in, attrnames)
 
     if dst_attrs:
         if "Bounds" in attrnames:
@@ -187,6 +199,10 @@ def check(raster_in,
     
     if printf or Raise:
         # 规范打印
+        if diffe == []:
+            if printf:
+                print('栅格属性一致')
+            return True, []
         message = '以下属性不一致\n'
         for i in range(len(attrnames)):
             if attrnames[i] in diffe:
@@ -196,9 +212,9 @@ def check(raster_in,
                             \n-\
                             \n--->dst : {cd.wlen(dst_attrs[i],w_len,10)}\n')
                           
-        if message == '以下属性不一致\n':
-            judge = True if diffe == [] else False
-            return judge,diffe
+        # if message == '以下属性不一致\n':
+        #     judge = True if diffe == [] else False
+        #     return judge,diffe
         
         if Raise in ('w','e'):
             Raise = Exception if Raise == 'e' else Warning
@@ -220,7 +236,7 @@ def check(raster_in,
     
 
 
-def check_all(*rasters,args=(), need=None):
+def check_all(*rasters,args=None, need=None):
     '''
     比较栅格集的属性是否一致
     默认比较是否统一(空间参考、范围、栅格行列数)
@@ -265,6 +281,21 @@ def check_all(*rasters,args=(), need=None):
     
 
 
+
+# def checks(*rasters,
+#            args=None, need=None,
+#            printf=False, Raise = None,
+#            w_len=60):
+#     if check_all(*rasters,args=None, need=None):
+#         return True, []
+#     else:
+        
+
+
+
+
+def bounds_to_point(left,bottom,right,top):
+    return [[left,top],[left,bottom],[right,bottom],[right,top],[left,top]]
 
 def copy_raster(raster_in, out_path):
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
@@ -325,7 +356,13 @@ def _return(out_path=None,get_ds=True,arr=None,profile=None,ds=None):
 
 
 
-def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, initial_offset=None,Tqbm=False):
+def window(raster_in,
+           shape=None, size=None,
+           step=None,
+           get_dict_id_win=False , get_dict_id_self_win=False,
+           get_self_wins=False,
+           initial_offset=None,
+           Tqbm=False):
     '''
     Parameters
     ----------
@@ -440,18 +477,23 @@ def window(raster_in, shape=None, size=None, step=None, get_self_wins=False, ini
     
 
     if Tqbm:
-        pbar = tqdm(total=shape[0]*shape[1],desc='生成窗口')
+        pbar = tqdm(total=shape[0]*shape[1], desc='生成窗口')
+
     y_off = initial_offset_y  # y初始坐标
     for y_inx,ax0 in enumerate(range(shape[0])):
         
         x_off = initial_offset_x
         height = yend if ax0 == (shape[0] - 1) else ysize 
+        if height == 0:
+            continue
         if get_self_wins:
             self_height = yend if ax0 == (shape[0] - 1) else ystep
             
         for x_inx,ax1 in enumerate(range(shape[1])):
 
             width = xend if ax1 == (shape[1] - 1) else xsize
+            if width == 0:
+                continue
             if get_self_wins:
                 self_width = xend if ax1 == (shape[1] - 1) else xstep
             
@@ -511,7 +553,8 @@ def read(raster_in:raster,
 
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
     arr = src.read().astype(dtype)
-    nodata = dtype(src.nodata)
+    nodata = type(arr[0,0,0])(src.nodata)
+    # nodata = dtype(src.nodata)
     shape = arr.shape
     profile = src.profile
     profile.update({'dtype': dtype,
@@ -608,9 +651,9 @@ def renan(raster_in, dst_in=None, nan=np.nan, dtype=np.float32, get_ds=True, out
     
     
     nan,dtype = get_RasterAttr(dst_in,'nodata','dtype',**{'dtype':r'profile["dtype"]'}) if dst_in else nan,dtype
-    if isinstance(dtype, str):
-        dtype = dtype if 'np.' in dtype else 'np.' + dtype if dtype != 'float' else 'np.float64'
-        dtype = eval(dtype)
+    # if isinstance(dtype, str):
+    #     dtype = dtype if 'np.' in dtype else 'np.' + dtype if dtype != 'float' else 'np.float64'
+    #     dtype = eval(dtype)
     arr, profile = read(raster_in=raster_in,n=2,tran=False, get_df=False,nan=nan,dtype=dtype)
     
     return _return(out_path=out_path, get_ds=get_ds, arr=arr, profile=profile)
@@ -945,7 +988,7 @@ def extract(raster_in, dst_in,
     # src_attrs = get_RasterAttr(src, attrnames)
     # dst_attrs = get_RasterAttr(dst, attrnames)
     
-    judge,dif = check(raster_in=src, dst_in=dst)
+    judge,dif = check(src_in=src, dst_in=dst)
 
     if not judge:
         
@@ -1257,7 +1300,7 @@ def zonal(raster_in, dst_in, stats, areas=None, dic=None, index='area',get_ds=No
     dst = rasterio.open(dst_in) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
     
     
-    judge,dif = check(raster_in=src, dst_in=dst)
+    judge,dif = check(src_in=src, dst_in=dst)
 
     if not judge:
         
@@ -1375,7 +1418,7 @@ def three_sigma(raster_in,dst_in=None,out_path=None, get_ds=True):
         dst = rasterio.open(dst_in) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
         
         
-        judge,dif = check(raster_in=src, dst_in=dst)
+        judge,dif = check(src_in=src, dst_in=dst)
     
         if not judge:
             
@@ -1477,7 +1520,7 @@ def unify(raster_in, dst_in,
     
 
     # 检查哪些属性需要统一
-    judge,dif = check(raster_in=src, dst_in=dst)
+    judge,dif = check(src_in=src, dst_in=dst)
     if judge:
         return _return(out_path=out_path,get_ds=get_ds,ds=src)
     elif 'crs' in dif:

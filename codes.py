@@ -76,7 +76,7 @@ def three_sigma(array,areas=None) -> np.array:
 
     '''
     
-    arr = np.array(array)
+    arr = np.array(array).astype('float64')
     
     if areas is None:
         mean = np.nanmean(arr)
@@ -92,7 +92,7 @@ def three_sigma(array,areas=None) -> np.array:
             mean = np.nanmean(arrx)
             std = np.nanstd(arrx)
             arr[(arrx < mean - 3 * std) | (arrx > mean + 3 * std)] = np.nan
-            warnings.filterwarnings('default')
+        warnings.filterwarnings('default')
 
     return arr
 

@@ -11,6 +11,7 @@ import pandas as pd
 import sys
 import warnings
 import traceback
+import datetime
 from typing import overload, Sequence, Iterator
 from concurrent.futures import ProcessPoolExecutor,ThreadPoolExecutor
 from functools import partial,wraps
@@ -51,6 +52,13 @@ def wlen(x,n:int,f_len:int=0,f_str:str =None):
     
     return new_x if f_str else new_x[f_len:]
 
+def Hex_to_RGB(hex):
+    r = int(hex[1:3],16)
+    g = int(hex[3:5],16)
+    b = int(hex[5:7], 16)
+    rgb = str(r)+' '+str(g)+' '+str(b)
+    print(rgb)
+    return rgb
 
 
 def three_sigma(array,areas=None) -> np.array:
@@ -95,6 +103,29 @@ def three_sigma(array,areas=None) -> np.array:
         warnings.filterwarnings('default')
 
     return arr
+
+
+
+
+def interval(array, Min=0, Max=1, nodata=np.nan, dtype='float64', drop=True):
+    arr = np.array(array).astype(dtype)
+    
+    min_value = np.quantile(arr, Min)
+    max_value = np.quantile(arr, Max)
+    
+    if drop:
+        arr[(arr < min_value) | (arr > max_value)] = nodata
+    else:
+        arr[(arr < min_value)] = min_value
+        arr[(arr > max_value)] = max_value
+    
+    return arr
+    
+    
+
+
+
+
 
 
 
@@ -552,7 +583,42 @@ def ungroup(dictData,dtype = False):
 
 
 
+def get_stop_first(date,stop):
 
+    start_date = datetime.date(date.year,1,1)
+    time_delta = datetime.timedelta(days=stop)
+    
+    while date >= start_date:
+        date -= time_delta
+    return date + time_delta
+
+def get_stop_end(date,stop):
+
+    end_date = datetime.date(date.year,12,31)
+    time_delta = datetime.timedelta(days=stop)
+    
+    while date <= end_date:
+        date += time_delta
+    return date - time_delta
+
+
+def get_stop_dates(start, end, stop, Year_all=True):
+    
+    start_date = start if type(start) == datetime.date else datetime.date(start)
+    end_date = end if type(end) == datetime.date else datetime.date(end)
+    
+    if Year_all:
+        start_date = get_stop_first(start_date, stop)
+        end_date = get_stop_end(end_date, stop)
+    
+    time_delta = datetime.timedelta(days=stop)
+    
+    date_ls = []
+    date = start_date
+    while date <= end_date:
+        date_ls.append(date)
+        date += time_delta
+    return date_ls
 
 
 

@@ -14,7 +14,6 @@ from itertools import chain
 
 import pandas as pd
 import numpy as np
-from alive_progress import alive_bar
 
 import rasterio
 import rasterio.mask
@@ -519,9 +518,9 @@ def window(raster_in,
 
 
 
-
 def read(raster_in:raster,
          n=1, tran=True, get_df=True,
+
          nan=np.nan, dtype=np.float32):
     """
     
@@ -557,11 +556,10 @@ def read(raster_in:raster,
     # nodata = dtype(src.nodata)
     shape = arr.shape
     profile = src.profile
-    profile.update({'dtype': dtype,
-                    'nodata': nan})
-    
+
     # 变形，无效值处理
     df = pd.DataFrame(arr.reshape(-1, 1))
+
     df.replace(nodata, nan, inplace=True)
     
     # 是否保留变形，是否变为df
@@ -569,15 +567,35 @@ def read(raster_in:raster,
         data = df if get_df else np.array(df)
 
     else:
-        data = (pd.DataFrame(np.array(df).reshape(shape)[0]) 
-                if (shape[0] == 1) & bool(get_df)
-                else np.array(df).reshape(shape))    
+        data = (pd.DataFrame(np.array(df).reshape(shape)[0]) # 返回不变形df
+                if (shape[0] == 1) & bool(get_df)            # 如果是单波段栅格且get_df
+                else np.array(df).reshape(shape))            # 否则返回array
     # 返回
     return (data, profile, shape)[:n] if n != 1 else data 
 
+def read_win(raster_in, n=3, nan=np.nan, dtype=np.float64, win=None):
+    """
 
+    获得形变矩阵
 
-def out(out_path, data, profile):
+    """
+
+    src = rasterio.open(raster_in)  # 打开栅格文件（打开的文件在用完后一定关闭，src.close()，不过在函数内部定义的在退出函数后会自动关闭）
+    arr = src.read(window=win).astype(dtype)  # 读取栅格矩阵，并进行类型转换
+    nodata = dtype(src.nodata)  # 获取栅格无效值，这里类型转换是因为无效值的种类有可能和矩阵不同
+    shape = arr.shape  # 获取行列数
+    profile = src.profile  # 获取栅格属性信息
+    profile.update({'dtype': dtype,
+                    'nodate': nan})  # 更新栅格属性用于输出
+
+    # 变形，无效值处理
+    data = pd.Series(arr.reshape(-1))  # 降维且转df
+    data.replace(nodata, nan, inplace=True)  # 替换无效值
+
+    # return df, profile, shape
+    return (data, profile, shape)[:n] if n != 1 else data  # 返回变量
+
+def out(out_path, data, profile, **kwargs):
     """
     
     输出函数，
@@ -586,7 +604,7 @@ def out(out_path, data, profile):
 
 
     """
-    
+    profile.update(kwargs)
     shape = (profile['count'], profile['height'], profile['width'])
     
     if data.shape != shape:
@@ -744,7 +762,7 @@ def resampling(raster_in, out_path =None, get_ds=True,
 
             profile.data.update({'height': out_shape[1], 'width': out_shape[2], 'transform': transform})
             nonlocal how
-            how = how if isinstance(how, int) else getattr(Resampling, how)
+            how = how if isinstance(how, int) else getattr(Resampling, 'nearest')
             data = src.read(out_shape=out_shape, resampling=how)
         else:
             data = src.read()
@@ -1450,6 +1468,58 @@ def three_sigma(raster_in,dst_in=None,out_path=None, get_ds=True):
             # df_src[(df_x[0] < mean - 3 * std) | (df_x[0] > mean + 3 * std)] = np.nan
     
     return _return(out_path, get_ds, arr=df_src, profile=profile)
+
+
+
+
+
+
+def interval(raster_in,
+             Min=0, Max=1, nodata=np.nan, dtype='float64', drop=True,
+             dst_in=None,out_path=None, get_ds=True):
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
+    
+    if dst_in is None:
+        df_src,profile = read(src,2)
+        df_src = cd.three_sigma(df_src)
+    
+    else:
+        dst = rasterio.open(dst_in) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
+        
+        
+        judge,dif = check(src_in=src, dst_in=dst)
+    
+        if not judge:
+            
+            mis = '\nextract 无法正确提取:\n'
+            for i in dif:
+                mis += f'\n    \"{i}\" 不一致'
+            mis += '\n\n----<请统一以上属性>'
+            raise Exception(mis)
+
+        
+        df_src,profile = read(src,2)
+        df_dst = read(dst)
+        
+        areas = list(df_dst[0].unique())
+        if len(areas) >= 1000:
+            warnings.warn('\n分区数为%d,分区栅格可能为浮点型栅格'%len(areas))
+        
+        for area in areas:
+            # areax = df_dst[(df_dst==area)]
+            areax = (df_dst==area)
+            df_src = cd.three_sigma(df_src,[areax])
+    return _return(out_path, get_ds, arr=df_src, profile=profile)
+
+
+
+
+
+
+
+
+
+
 
 
 @unrepe(src='raster_in',attrs=['crs','Bounds','raster_size'],dst='dst_in',moni_args=['run_how'],moni_kwargs={'Extract':(0,False,None,(),{},'')},return_and_dict=(_return,{'ds':'raster_in'},{}))

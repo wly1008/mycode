@@ -52,6 +52,44 @@ def wlen(x,n:int,f_len:int=0,f_str:str =None):
     
     return new_x if f_str else new_x[f_len:]
 
+
+
+def tranf_value_index_col(df, tranf=None, col_name=None, index_name=None, split_multi=True,clear=True):
+    
+    '''
+    dataframe以值显示索引与列
+    '''
+    
+    # def clear(x):
+        
+    #     if x == 0:
+    #         return True
+    #     else:
+    #         return bool(x)
+    
+    num_row, num_col = df.shape
+    arr = df.values.reshape(-1)
+    column = list(df.columns)*num_row
+    index = [i for i in list(df.index) for n in range(num_col)]
+    
+    col_name = col_name or 'column'
+    index_name = index_name or 'index'
+
+    if tranf == 'index':
+        df_tranf = pd.DataFrame({index_name : index},index=arr)
+    elif tranf == 'column':
+        df_tranf = pd.DataFrame({col_name : column},index=arr)
+    else:
+        df_tranf = pd.DataFrame({index_name : index, col_name : column},index=arr)
+    
+    return df_tranf
+
+
+
+
+
+
+
 def Hex_to_RGB(hex):
     r = int(hex[1:3],16)
     g = int(hex[3:5],16)
@@ -60,6 +98,8 @@ def Hex_to_RGB(hex):
     print(rgb)
     return rgb
 
+def filtration(x, a, b):
+    return max(a, min(x, b))
 
 def three_sigma(array,areas=None) -> np.array:
     '''

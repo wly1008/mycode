@@ -118,7 +118,7 @@ def arg_tidy(fn,*args,full=True,**kwargs):
         
         # 默认参数字典
         if def_value:
-            def_dict = {loc_name[i]:def_value[i] for i in range(-1,-len(def_value),-1)}
+            def_dict = {loc_name[i]:def_value[i] for i in range(-1,-len(def_value)-1,-1)}
         else:
             def_dict = ArgSpec[5]  # 存在可变参数 * 时，def_value=None,def_dict = ArgSpec[5]
         all_kwargs = def_dict

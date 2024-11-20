@@ -15,6 +15,45 @@ import datetime
 from typing import overload, Sequence, Iterator
 from concurrent.futures import ProcessPoolExecutor,ThreadPoolExecutor
 from functools import partial,wraps
+from sys import getsizeof as getsize
+
+
+def recombination_df(ls_df, ls_name=None):
+    '''
+    按列名重组df,相同的列合并为新的df
+
+    Parameters
+    ----------
+    ls_df : TYPE
+        df列表
+    ls_name : TYPE
+        新列名，与df列表对应, 默认则从0开始
+
+    Returns
+    -------
+    dic_df : dict
+        原列名为key，新生成的df为值
+
+    '''
+    if ls_name is None:
+        ls = []
+    ls_name += list(range(len(ls_df) - len(ls_name)))
+    ls = []
+    for dfn, name in zip(ls_df,ls_name):
+        dfn = dfn.stack()
+        dfn.name = name
+        ls.append(dfn)
+    df_all = pd.concat(ls,axis=1).stack().unstack(1)
+    
+    
+    dic_df = {}
+    for v in df_all.columns:
+        dfn = df_all[v]
+        dfn = dfn.unstack()
+        dic_df[v] = dfn
+    return dic_df
+
+
 
 def wlen(x,n:int,f_len:int=0,f_str:str =None):
     '''
@@ -52,7 +91,19 @@ def wlen(x,n:int,f_len:int=0,f_str:str =None):
     
     return new_x if f_str else new_x[f_len:]
 
-
+def df_split(df,column,sep,dtype=None):
+    columns = df.columns
+    
+    
+    df2 = df[column].str.split(sep, expand=True).stack().reset_index(level=1, drop=True).rename(column)
+    df1 = df.drop(column, axis=1)
+    df = df1.join(df2) if len(df1.index) != len(df2.index) else df
+    if dtype:
+        df[column] = df[column].astype(dtype)
+    return df.loc[:,columns]
+    
+    
+    
 
 def tranf_value_index_col(df, tranf=None, col_name=None, index_name=None, split_multi=True,clear=True):
     
@@ -86,7 +137,26 @@ def tranf_value_index_col(df, tranf=None, col_name=None, index_name=None, split_
 
 
 
+def binary_conversion(var: int):
+    """
+    二进制单位转换
+    :param var: 需要计算的变量，bytes值
+    :return: 单位转换后的变量，kb 或 mb
+    """
+    # assert isinstance(var, int)
+    if var <= 1024:
+        return f'占用 {round(var / 1024, 2)} KB内存'
+    else:
+        return f'占用 {round(var / (1024 ** 2), 2)} MB内存'
 
+def size(x):
+    return binary_conversion(getsize(x))
+
+
+
+
+def filename(path):
+    return os.path.basename(path).split('.')[0]
 
 
 
@@ -164,7 +234,22 @@ def interval(array, Min=0, Max=1, nodata=np.nan, dtype='float64', drop=True):
     
 
 
+class TempDir:
+    """Context manager to temporarily change the current working directory."""
+    
+    def __init__(self, new_dir):
+        self.new_dir = new_dir
+        self.old_dir = None
 
+    def __enter__(self):
+        # Store the old directory and change to the new one
+        self.old_dir = os.getcwd()
+        os.chdir(self.new_dir)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Change back to the old directory, ignoring any exceptions
+        os.chdir(self.old_dir)
 
 
 
@@ -539,7 +624,7 @@ def getattrs(src, *args, ds={}, get_runs=False, **kwargs):
     # 调用批量操作函数
     else:
         return evals(*runs,**ds)
-
+# getattrs.getattr
 
 def add_attrs(src, run=False, ds={}, **attrs_dict):
     """
@@ -579,6 +664,21 @@ def add_attrs(src, run=False, ds={}, **attrs_dict):
 字典相关函数
 """
         
+
+
+def delete(dic,*ks,inplace=False):
+    if inplace:
+        for key in ks:
+            if key in dic:
+                del dic[key]
+    else:
+        dic1 = dic.copy()
+        for key in ks:
+            if key in dic1:
+                del dic1[key]
+        return dic1
+
+
 
 
 
@@ -660,8 +760,71 @@ def get_stop_dates(start, end, stop, Year_all=True):
         date += time_delta
     return date_ls
 
+def wgt_from_conter(conter_array, lim=(0,1)):
+    '''
+    由中心点获取权重，默认数据已归一化
+
+    Parameters
+    ----------
+    conter_array : TYPE
+        中心点坐标array.
+    lim : TYPE, optional
+        上下限. The default is (0,1).
+
+    Returns
+    -------
+    wgt : TYPE
+        权重.
+
+    '''
+    lev = conter_array
+    
+    lev1 = np.append(2 * lim[1] - lev[0], lev)
+    lev0 = np.append(lev1, lim[0] - lev1[-1])
+    
+    t = lev0[:-1] - lev0[1:]
+    
+    wgt = (t/2)[1:] + (t/2)[:-1]
+    
+    return wgt
 
 
+
+def name_ext(path):
+    # 获取文件名
+    file_name_with_ext = os.path.basename(path)
+    
+    # 获取文件名和后缀
+    file_name, file_extension = os.path.splitext(file_name_with_ext)
+    
+    
+    return file_name, file_extension
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+if __name__ == 'main':
+    import inspect
+    current_line = inspect.currentframe().f_lineno
     
         
         

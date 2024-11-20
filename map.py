@@ -13,7 +13,12 @@ import cartopy.crs as ccrs
 from mycode import data
 import mycode.codes as cd
 import os
-
+import numpy as np
+import shapefile as shp
+from matplotlib.path import Path
+from matplotlib.patches import PathPatch
+from matplotlib.collections import LineCollection
+from shapefile import Reader
 
 dir_data = os.path.abspath(os.path.dirname(data.__file__))
 
@@ -35,7 +40,7 @@ def add_scalebar(ax,length,loc_x=0.05, loc_y=0.05,fontsize=12, size=None,lw=1):
     lon0: 经度
     lat0: 纬度
     length: 长度 (Km)
-    size: 控制粗细和距离的 (km),设为None则为length的3%
+    size: 控制粗细和距离的 (km),默认为length的3%
     '''
     length = length*1000
     if size is None:
@@ -59,7 +64,6 @@ def add_scalebar(ax,length,loc_x=0.05, loc_y=0.05,fontsize=12, size=None,lw=1):
     ax.vlines(x = lon0+length, ymin = lat0-size, ymax = lat0+size, colors="black", ls="-", lw=lw)
     
     
-    fontsize
     
     ax.text(lon0+length,lat0+size+size*1,'%d km' % (length/1000),ha = 'center',fontsize=fontsize)
     ax.text(lon0+length/2,lat0+size+size*1,'%d' % (length/2000),ha = 'center',fontsize=fontsize)
@@ -190,13 +194,135 @@ def get_crs(gdf):
 
 
 
+def shp2clip(originfig, ax, gdf, fId=None, region='China'
+             #, cover=True, crs=None
+             ):
+    # 使用 geopandas 读取 shapefile
+    # gdf = gpd.read_file(shpfile).to_crs(crs) if crs else gpd.read_file(shpfile)
+    
+    # 根据区域过滤 GeoDataFrame
+    if fId:
+        gdf = gdf[gdf[fId] == region]
+    
+    # 从几何图形创建路径
+    vertices = []
+    codes = []
+    
+    for geom in gdf.geometry:
+        if geom.type == 'Polygon':
+            exterior_coords = geom.exterior.coords
+            vertices.extend(exterior_coords)
+            codes += [Path.MOVETO] + [Path.LINETO] * (len(exterior_coords) - 2) + [Path.CLOSEPOLY]
+        elif geom.type == 'MultiPolygon':
+            for polygon in geom.geoms:
+                exterior_coords = polygon.exterior.coords
+                vertices.extend(exterior_coords)
+                codes += [Path.MOVETO] + [Path.LINETO] * (len(exterior_coords) - 2) + [Path.CLOSEPOLY]
+    
+    # 创建剪切路径
+    clip = Path(vertices, codes)
+    clip_patch = PathPatch(clip, transform=ax.transData)
+    
+    # 将剪切路径应用于原始图形的集合
+    if hasattr(originfig, 'collections'):
+        for contour in originfig.collections:
+            contour.set_clip_path(clip_patch)
+    else:
+        originfig.set_clip_path(clip_patch)
+    
+    return clip_patch
+
+def set_clip(originfig, ax, clip):
+    for contour in originfig.collections:
+        contour.set_clip_path(clip)
+
+
+
+def readshapefile(shapefile,drawbounds=True,zorder=None,
+                      linewidth=0.5,color='k',ax=None,city = None
+                      ):
+    shf = Reader(shapefile, encoding='utf-8')
+    coords = []
+    shptype = shf.shapes()[0].shapeType
+    for shprec in shf.shapeRecords():
+        shp = shprec.shape
+        if shptype != shp.shapeType:
+            raise ValueError('readshapefile can only handle a single shape type per file')
+        if shptype not in [1,3,5,8]:
+            raise ValueError('readshapefile can only handle 2D shape types')
+        verts = shp.points
+        if shptype in [1,8]: # a Point or MultiPoint shape.
+            lons, lats = list(zip(*verts))
+                # if latitude is slightly greater than 90, truncate to 90
+            lats = [max(min(lat, 90.0), -90.0) for lat in lats]
+            if len(verts) > 1: # MultiPoint
+                x,y = lons, lats
+                coords.append(list(zip(x,y)))
+            else: # single Point
+                x,y = lons[0], lats[0]
+                coords.append((x,y))
+        else: # a Polyline or Polygon shape.
+            parts = shp.parts.tolist()
+            for indx1,indx2 in zip(parts,parts[1:]+[len(verts)]):
+                lons, lats = list(zip(*verts[indx1:indx2]))
+                    # if latitude is slightly greater than 90, truncate to 90
+                lats = [max(min(lat, 90.0), -90.0) for lat in lats]
+                x, y = lons, lats
+                coords.append(list(zip(x,y)))
+        # draw shape boundaries for polylines, polygons  using LineCollection.
+    if shptype not in [1,8] and drawbounds:
+            # get current axes instance (if none specified).
+        ax = ax
+        lines = LineCollection(coords,antialiaseds=(1,))
+        lines.set_color(color)
+        lines.set_linewidth(linewidth)
+        if zorder is not None:
+            lines.set_zorder(zorder)
+        ax.add_collection(lines)
+
+        if city != None:
+            line = LineCollection(coords[4:5],antialiaseds=(1,))
+            line.set_color('r')
+            line.set_linewidth(2)
+            ax.add_collection(line)
 
 
 
 
 
+def grid_area(arr_lon, arr_lat, r = 6371000, loc='c'):
+    '''
+    计算格点面积
 
+    Parameters
+    ----------
+    arr_lon : array_like
+        经度数组
+    arr_lat : array_like
+        维度数组.
+    r : TYPE, optional
+        球半径. The default is 6371000.
+    loc : TYPE, optional
+        坐标位置, 中心, 其他没写, . The default is 'c'.
 
+    Returns
+    -------
+    arr_s : TYPE
+        DESCRIPTION.
+
+    '''
+    xs = arr_lon * np.pi/180
+    ys = (90 - arr_lat) * np.pi/180  # 从极点开始
+    
+    x_step = xs[1] - xs[0]
+    y_step = ys[1] - ys[0]
+    
+    
+    s = abs(r**2 * x_step * (np.cos(ys-y_step/2) - np.cos(ys+y_step/2)))
+    
+    arr_s = np.array([s for i in range(len(xs))]).T  # 每个格点的面积
+    
+    return arr_s
 
 
 

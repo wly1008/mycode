@@ -15,8 +15,13 @@ from itertools import chain
 import pandas as pd
 import numpy as np
 
+import geopandas as gpd
+
 import rasterio
 import rasterio.mask
+from rasterio import features
+from rasterio.transform import Affine
+from rasterio.transform import from_origin
 from rasterio.windows import Window
 from rasterio.warp import calculate_default_transform
 from rasterio.enums import Resampling
@@ -25,6 +30,8 @@ from rasterio.warp import reproject as _reproject
 import mycode.codes as cd
 from mycode.decorator import unrepe
 from mycode._Class import raster,false
+
+
 
 
 
@@ -78,7 +85,7 @@ def get_RasterAttr(raster_in, *args, ds={}, **kwargs):
            'ysize': r'abs(src.transform[4])',
            'Bounds': r'[float(f"{i:f}") for i in src.bounds]',
            'values': r'src.read().astype(dtype)//ks//{"dtype":np.float64}',
-           'arr': r'src.values.reshape(-1, 1)',
+           'arr': r'src.values',
            'df': r'pd.DataFrame(src.values.reshape(-1, 1))',
            # 'shape_b': r"(src.count, src.height, src.width)"
            'shape_b': ('count', 'height', 'width')
@@ -290,15 +297,45 @@ def check_all(*rasters,args=None, need=None):
 #     else:
         
 
+# rasterio.DatasetReadertransform
+
+class shp_loc:
+    def __init__(self, shp, dtype=float,ex=0,t=0):
+        self.shp = shp
+        self.bounds = self.get_shp_bounds(dtype=dtype,ex=ex)
+        self.xyslice = self.get_xy_slice(t)
+
+
+    def get_shp_bounds(self, dtype, ex=0):
+        bounds = self.shp.bounds
+        return bounds.apply(lambda x:
+                                   min(x) - ex
+                               if x.name[:3] == 'min' 
+                               else 
+                                   max(x) + ex,
+                               axis=0).astype(dtype)
+
+    def get_xy_slice(self,t):
+        minx, miny, maxx, maxy = self.bounds
+        if t:
+            lon, lat = slice(minx, maxx), slice(maxy,miny)
+        else:
+            lon, lat = slice(minx, maxx), slice(miny, maxy)
+        return lon, lat
+    
+
+        
+        
+
 
 
 
 def bounds_to_point(left,bottom,right,top):
     return [[left,top],[left,bottom],[right,bottom],[right,top],[left,top]]
 
-def copy_raster(raster_in, out_path):
+def copy_raster(raster_in, out_path,update_stats=False):
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
-    out_ds(ds=src,out_path=out_path)
+    out_ds(ds=src,out_path=out_path,update_stats=update_stats)
     
 
 
@@ -326,7 +363,7 @@ def _return(out_path=None,get_ds=True,arr=None,profile=None,ds=None):
     
     Returns
     -------
-    if out_path:生成栅格文件，不返回
+    if out_path:生成栅格文件，返回out_path
     elif get_ds:返回栅格数据(io.DatasetWriter)
     else:返回重采样后的栅格矩阵（array）和 profile
 
@@ -341,6 +378,7 @@ def _return(out_path=None,get_ds=True,arr=None,profile=None,ds=None):
     
     if out_path:
         out(out_path=out_path,data=arr, profile=profile)
+        return out_path
         
     elif get_ds:
         shape = (profile['count'], profile['height'], profile['width'])
@@ -551,8 +589,11 @@ def read(raster_in:raster,
     assert n in (1,2,3), 'n = 1 or 2 or 3'
 
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
-    arr = src.read().astype(dtype)
-    nodata = type(arr[0,0,0])(src.nodata)
+    arr = src.read()#.astype(dtype)
+    if src.nodata is None:
+        nodata = None
+    else:
+        nodata = type(arr[0,0,0])(src.nodata)
     # nodata = dtype(src.nodata)
     shape = arr.shape
     profile = src.profile
@@ -595,7 +636,7 @@ def read_win(raster_in, n=3, nan=np.nan, dtype=np.float64, win=None):
     # return df, profile, shape
     return (data, profile, shape)[:n] if n != 1 else data  # 返回变量
 
-def out(out_path, data, profile, **kwargs):
+def out(out_path, data, profile, update_stats=False, **kwargs):
     """
     
     输出函数，
@@ -611,10 +652,13 @@ def out(out_path, data, profile, **kwargs):
         data = np.array(data).reshape(shape)
 
     with rasterio.open(out_path, 'w', **profile) as src:
+        
         src.write(data)
+        if update_stats:
+            src.update_stats()
 
 
-def out_ds(ds, out_path):
+def out_ds(ds, out_path,update_stats=False):
     """
     输出栅格数据
 
@@ -635,6 +679,8 @@ def out_ds(ds, out_path):
     profile = ds.profile
     with rasterio.open(out_path, 'w', **profile) as src:
         src.write(arr)
+        if update_stats:
+            src.update_stats()
 
 
 def renan(raster_in, dst_in=None, nan=np.nan, dtype=np.float32, get_ds=True, out_path=None):
@@ -682,7 +728,6 @@ def renan(raster_in, dst_in=None, nan=np.nan, dtype=np.float32, get_ds=True, out
 
 
 
-
 def merge():...
 
 
@@ -690,7 +735,7 @@ def merge():...
 
 
 def resampling(raster_in, out_path =None, get_ds=True,
-               re_shape=None, re_scale=None, re_size=None, how='mode', printf=False):
+               re_shape=None, re_scale=None, re_size=None,size=False, how='mode', printf=False):
     """
     栅格重采样
 
@@ -799,10 +844,34 @@ def resampling(raster_in, out_path =None, get_ds=True,
             ysize = re_size
         else:
             xsize, ysize = re_size
-        out_shape = (count, int((north - south) / ysize), int((east - west) / xsize))
+        
+        
+        
+        
+        
+        out_shape = (count, round((north - south) / ysize), round((east - west) / xsize))
+        if size:
+            transform = rasterio.transform.from_origin(west, north, xsize, ysize)
+            height, width = out_shape[1:]
+            
+            left, bottom, right, top = west, north-ysize*height, west+xsize*width, north
+            
+            
+            profile.data.update({'height': height, 'width': width, 'transform': transform})
+            
+            y_off,x_off = src.index(left, top)
+            y_end, x_end = src.index(right, bottom)
+            width, height = x_end-x_off, y_end-y_off
+            win = Window(x_off, y_off,width, height)
+            how = how if isinstance(how, int) else getattr(Resampling, 'nearest')
+            data = src.read(window=win,out_shape=out_shape, resampling=how,boundless=True,fill_value=nodata)
 
+        else:
+            # 更新
+            data = update()
+        shape = out_shape
         # 更新
-        data = update()
+        # data = update()
         shape = out_shape
 
 
@@ -830,13 +899,14 @@ def resampling(raster_in, out_path =None, get_ds=True,
 
 
 
-@unrepe(src='raster_in',attrs=['crs'],dst='dst_in',dst_attrs=['crs'],moni_args=('run_how','resolution','shape'),return_and_dict=(_return,{'ds':'raster_in'},{}))
+# @unrepe(src='raster_in',attrs=['crs'],dst='dst_in',dst_attrs=['crs'],moni_args=('run_how','resolution','shape'),return_and_dict=(_return,{'ds':'raster_in'},{}))
 def reproject(raster_in, dst_in=None,
               out_path=None, get_ds=True,
               crs=None,
               how='mode',
+              dst_nodata='src',
               run_how=None,
-              resolution=None, shape=(None, None, None)):
+              resolution=None, shape=(None, None, None),**kwargs):
     """
     栅格重投影
 
@@ -879,7 +949,7 @@ def reproject(raster_in, dst_in=None,
    
     Raises
     ------
-        dst_in 和 bounds必须输入其中一个
+        dst_in 和 crs 必须输入其中一个
     
     Returns
     -------
@@ -904,15 +974,22 @@ def reproject(raster_in, dst_in=None,
 
     # 输入数据整理
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
+    if dst_nodata == 'src':
+        dst_nodata = src.nodata
+    run = False
     if crs:
+        if crs == 'src':
+            crs = src.crs
+            run = True
+        
         pass
     elif dst_in:
         crs = get_RasterAttr(dst_in, 'crs')
     else:
-        raise Exception("dst_in 和 bounds必须输入其中一个")
+        raise Exception("dst_in 和 crs 必须输入其中一个")
     
     # 如果输入栅格与目标投影一致则直接返回
-    if src.crs == crs:
+    if src.crs == crs and not run:
         _return(out_path=out_path, get_ds=get_ds, ds=src)
     
     profile = src.profile
@@ -925,15 +1002,20 @@ def reproject(raster_in, dst_in=None,
                                                                        resolution=resolution, dst_width=shape[2],
                                                                        dst_height=shape[1])
 
-    profile.update({'crs': crs, 'transform': dst_transform, 'width': dst_width, 'height': dst_height})
+    profile.update({'crs': crs, 'transform': dst_transform, 'width': dst_width, 'height': dst_height,'nodata':dst_nodata})
     if run_how:
         how = run_how
     how = how if isinstance(how, int) else getattr(Resampling, how)
 
     lst = []
     for i in range(1, src.count + 1):
-        arrn = src.read(i)
-        dst_array = np.empty((dst_height, dst_width), dtype=profile['dtype'])
+        if 'int8' in str(profile['dtype']):
+            # int8时,dst_nodata输入负数无效
+            arrn = src.read(i).astype(np.int16)
+            dst_array = np.empty((dst_height, dst_width), dtype=np.int16)
+        else:
+            arrn = src.read(i)
+            dst_array = np.empty((dst_height, dst_width), dtype=profile['dtype'])
         _reproject(  
             # 源文件参数
             source=arrn,
@@ -944,17 +1026,19 @@ def reproject(raster_in, dst_in=None,
             destination=dst_array,
             dst_transform=dst_transform,
             dst_crs=crs,
-            dst_nodata=src.nodata,
+            dst_nodata=dst_nodata,
             # 其它配置
             resampling=how,
             num_threads=2)
-
+        if 'int8' in str(profile['dtype']):
+            dst_array = dst_array.astype(np.int8)
         lst.append(dst_array)
     dst_arr = np.array(lst)
-
+    profile.update(kwargs)
     if out_path:
         with rasterio.open(out_path, 'w', **profile) as ds:
             ds.write(dst_arr)
+        return out_path
     elif get_ds:
         ds = create_raster(**profile)
         ds.write(dst_arr)
@@ -1640,6 +1724,55 @@ def unify_wins(raster_in, dst_in,
 
 
 
+
+def polygon_to_raster(shp,raster,pixel,field,
+                      crs=None,dtype='float32',nodata=-9999):
+    '''
+    矢量转栅格
+    :param shp: 输入矢量全路径，字符串，无默认值
+    :param raster: 输出栅格全路径，字符串，无默认值
+    :param pixel: 像元大小，与矢量坐标系相关
+    :param field: 栅格像元值字段
+    :param Code: 输出坐标系代码，默认为4326
+    :return: None
+    '''
+
+    # 判断字段是否存在
+    if crs:
+        shapefile = gpd.read_file(shp).to_crs(crs)
+    else:
+        shapefile = gpd.read_file(shp)
+        crs = shapefile.crs
+    if not field in shapefile.columns:
+        raise Exception ('输出字段不存在')
+    shapefile[field] = shapefile[field].astype(dtype)
+
+    bound = shapefile.bounds
+    width = int((bound.get('maxx').max()-bound.get('minx').min())/pixel)
+    height = int((bound.get('maxy').max()-bound.get('miny').min())/pixel)
+    transform = Affine(pixel, 0.0, bound.get('minx').min(),
+           0.0, -pixel, bound.get('maxy').max())
+
+    meta = {'driver': 'GTiff',
+            'dtype': dtype,
+            'nodata': nodata,
+            'width': width,
+            'height': height,
+            'count': 1,
+            'crs': crs,
+            'transform': transform}
+
+    with rasterio.open(raster, 'w+', **meta) as out:
+        out_arr = out.read(1)
+        shapes = ((geom,value) for geom, value in zip(shapefile.get('geometry'), shapefile.get(field)))
+        burned = features.rasterize(shapes=shapes, fill=nodata, out=out_arr, transform=out.transform)
+        out.write_band(1, burned)
+        out.statistics(1, clear_cache=True)
+
+
+
+
+
 """
 以下函数包含统一空间参考
 
@@ -1828,10 +1961,146 @@ def zonal_u(raster_in, dst_in, stats, areas=[], dic=None, index='area',get_ds=No
        
  
 
+'''
+其他
+
+'''
+
+def nc_to_tif(ds_nc,
+              vr,
+              out_ph=None,
+              loc_names=None,
+              crs='EPSG:4326',
+              dtype='float32',
+              nodata=None):
+    '''
+    nc转tif
+    (数据维度及排序为(time,lat,lon),或（lat,lon))
+
+    Parameters
+    ----------
+    ds_nc : xr.Dataset
+        nc数据
+    vr : str
+        提取的变量
+    out_ph : str
+        输出位置
+    loc_names : dict, optional
+        lon,lat的对应变量名,默认为lon,lat
+        
+        eg. {'lon':'longitude', 'lat':'latitude'}
+        
+    crs : str, dict, or CRS; optional
+        空间参考. The default is 'EPSG:4326'.
+    dtype :  str or numpy dtype, optional
+        数据类型. The default is 'float32'.
+    nodata : int, float, or nan; optional
+        无效值.
+
+    Returns
+    -------
+    None.
+
+    '''
+    
+    # 计算transform
+    if loc_names is None:
+        loc_names = {}
+    
+    lon = ds_nc[loc_names.get('lon', 'lon')].data
+    lat = ds_nc[loc_names.get('lat', 'lat')].data
+    
+    
+    res_lon = lon[1] - lon[0]
+    res_lat = abs(lat[1] - lat[0])
+    
+    transform = from_origin(west=lon.min()-res_lon/2,
+                            north=lat.max()+res_lat/2,
+                            xsize=res_lon, ysize=res_lat)
+    
+    
+    # 获取数据矩阵
+    arr_vr = ds_nc[vr].data
+    
+    if arr_vr.ndim == 2:
+        arr_vr = np.array([arr_vr])
+    count, height, width = arr_vr.shape
+    
+    if lat[1] > lat[0]:
+        arr_vr = np.flip(arr_vr,axis=1) 
+    
+    # 定义profile
+    profile = {
+        "driver": "GTiff",
+        "dtype": dtype,
+        "width": width,
+        "height": height,
+        "count": count,  # 单波段
+        "crs": crs,
+        "transform": transform,
+        "nodata": nodata
+    }
+    
+    if out_ph is None:
+        return arr_vr, profile
+    # 输出
+    with rasterio.open(out_ph, 'w', **profile) as dst:
+        dst.write(arr_vr)
+    return out_ph
 
 # src = raster_in if type(raster_in) in (i[1] for i in inspect.getmembers(rasterio.io)) else rasterio.open(raster_in)
 # dst = dst_in if type(dst_in) in (i[1] for i in inspect.getmembers(rasterio.io)) else rasterio.open(dst_in)
 
+
+def get_geometry(ph_shp, crs=None):
+    shp = gpd.read_file(ph_shp) if crs is not None else gpd.read_file(ph_shp).to_crs(crs)
+    return shp.geometry
+
+
+
+def rio_mask(dataset, shapes, crop=True,nodata=None,**kwgs):
+    '''
+    
+
+    Parameters
+    ----------
+    src_in : a dataset object opened in 'r' mode
+        栅格数据
+    shapes : iterable object
+        矢量形状，
+    crop : bool (opt)
+        是否裁剪到矢量范围,否则保留矢量几何范围外为无效值. The default is True.
+    nodata: int or float (opt)
+        值表示每个栅格波段内的nodata。
+        如果未设置，则默认为输入栅格的nodata值。
+        如果栅格没有设置nodata值，则默认为0。
+    **kwgs : 
+        DESCRIPTION.
+
+    Returns
+    -------
+    arrn : np.array
+        结果数组.
+    profile : Profile(from rasterio.profiles)
+        DESCRIPTION.
+
+    '''
+    # crs = src_in.crs
+    
+    # shp = gpd.read_file(ph_shp).to_crs(crs)
+    # shapes = shp.geometry
+    
+    profile = dataset.profile
+    # nodata = np.float32(src.nodata)
+    arr, tf = rasterio.mask.mask(dataset, shapes, crop=crop,nodata=nodata,**kwgs)
+    profile.update({
+                # 'nodata':np.nan,
+                # 'count': 1,
+                # 'dtype':np.float32,
+                "height": arr.shape[1],
+                "width": arr.shape[2],
+                "transform": tf})
+    return arr, profile
 
 
 

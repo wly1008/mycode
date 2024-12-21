@@ -37,7 +37,7 @@ def reproject(raster_in, dst_in=None,
               dst_nodata=None,
               resolution=None, dst_width=None, dst_height=None,
               num_threads=4,
-              gcps=None, rpcs=None,
+              # gcps=None, rpcs=None,
               **creation_options):
     '''
     
@@ -54,7 +54,7 @@ def reproject(raster_in, dst_in=None,
     get_ds : bool, optional
         是否输出临时栅格.当out_path不为None时并不会输出. Default: True.
     crs : CRS or str, optional
-        目标投影,不与dst_in同时使用. Default: None.
+        目标投影, None且dst_in=None则与输入栅格相同，不与dst_in同时使用. Default: None.
     how: (str or int) , optional.
         重采样方式，Default: nearest.
 
@@ -67,7 +67,7 @@ def reproject(raster_in, dst_in=None,
     
     
     dst_nodata : 数字类, optional
-        目标无效值，None则与输入栅格相同. Default: None.
+        目标无效值，默认与输入栅格相同(if set), 或者0(GDAL default) . Default: None.
     resolution: tuple (x resolution, y resolution) or float, optional
         目标分辨率，以目标坐标参考为单位系统.
         
@@ -100,6 +100,9 @@ def reproject(raster_in, dst_in=None,
     
     with ExitStack() as stack:
         
+        # if gcps and rpcs:
+        #     raise ValueError("ground control points and rational polynomial",
+        #                      " coefficients may not be used together.")
         # 原数据属性获取
         src = stack.enter_context(rasterio.open(raster_in)) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
         
@@ -109,10 +112,11 @@ def reproject(raster_in, dst_in=None,
         width, height = src.width, src.height
         bounds = src.bounds
         count = src.count
+        bandNames = src.descriptions
         
         # 目标投影设置
         if dst_in and crs:
-            raise ValueError("目标栅格和目标投影不能一起使用。")
+            raise ValueError("dst_in和crs不能一起使用。")
         
         if dst_in:
             dst = stack.enter_context(rasterio.open(dst_in)) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
@@ -125,13 +129,16 @@ def reproject(raster_in, dst_in=None,
             dst_crs = src_crs
         
         # 目标无效值设置
+
         if dst_nodata is None:
             dst_nodata = src_nodata
         
         # 计算新的位置信息
-        dst_transform, dst_width, dst_height = calculate_default_transform(src_crs, dst_crs, width, height, *bounds,
-                                                                           resolution=resolution, dst_width=dst_width, dst_height=dst_height,
-                                                                           gcps=gcps, rpcs=rpcs)
+        dst_transform, dst_width, dst_height = calculate_default_transform(
+            src_crs, dst_crs, width, height, *bounds,
+            resolution=resolution, dst_width=dst_width, dst_height=dst_height,
+            # gcps=gcps, rpcs=rpcs,
+            )
         
         # 更新profile
         profile.update({'crs': dst_crs, 'transform': dst_transform, 'width': dst_width, 'height': dst_height,'nodata':dst_nodata})
@@ -155,9 +162,9 @@ def reproject(raster_in, dst_in=None,
             src_transform=src.transform,
             # 目标文件参数
             destination=dst_array,
-            dst_transform=dst_transform,
             dst_crs=dst_crs,
             dst_nodata=dst_nodata,
+            dst_transform=dst_transform,
             # 其它配置
             resampling=how,
             num_threads=num_threads)
@@ -166,15 +173,17 @@ def reproject(raster_in, dst_in=None,
         
         # 按需求更新
         profile.update(creation_options)
-        
+        profile['descriptions'] = bandNames
         # 输出
         if out_path:
             with rasterio.open(out_path, 'w', **profile) as ds:
+                ds.descriptions = bandNames
                 ds.write(dst_array)
             return out_path
         
         elif get_ds:
             ds = create_raster(**profile)
+            ds.descriptions = bandNames
             ds.write(dst_array)
             return ds
         else:

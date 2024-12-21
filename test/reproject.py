@@ -59,7 +59,7 @@ def reproject(raster_in, dst_in=None,
     
     
     dst_nodata : 数字类, optional
-        目标未知数，None则与输入栅格相同. Default: None.
+        目标无效值，None则与输入栅格相同. Default: None.
     resolution: tuple (x resolution, y resolution) or float, optional
         目标分辨率，以目标坐标参考为单位系统.
         
@@ -128,7 +128,6 @@ def reproject(raster_in, dst_in=None,
         
         # 重采样方式
         how = how if isinstance(how, int) else getattr(Resampling, how)
-        rasterio.int16
         # 初始化source矩阵
         if 'int8' in str(profile['dtype']):
             # int8时,dst_nodata输入负数无效
@@ -147,7 +146,7 @@ def reproject(raster_in, dst_in=None,
             # 目标文件参数
             destination=dst_array,
             dst_transform=dst_transform,
-            dst_crs=crs,
+            dst_crs=dst_crs,
             dst_nodata=dst_nodata,
             # 其它配置
             resampling=how,

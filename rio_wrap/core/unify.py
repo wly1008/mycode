@@ -28,13 +28,14 @@ class noneLock():
     def acquire(self):...
 
 
+# src.res
 
 
 def unify(raster_in,dst_in=None,out_path=None,
-          dst_attrs={'crs':None, 'bounds':None, 'size':None, 'shape':None},
+          dst_attrs={'crs':None, 'bounds':None, 'res':None, 'shape':None},
           nodata=None,
           dtype=None,
-          get_ds=True,
+          get_ds=False,
           Double_operation=False,
           how='nearest',
           crop=True, arr_crop=None,
@@ -54,15 +55,17 @@ def unify(raster_in,dst_in=None,out_path=None,
         The default is None.
     dst_attrs : dict, optional
         目标属性. 不与dst_in共用
-        The default is {'crs':None, 'bounds':None, 'size':None, 'shape':None}.
+        The default is {'crs':None, 'bounds':None, 'res':None, 'shape':None}.
     mode : str, optional
         裁剪模式，可选round,rio,touch或输入自定义函数，默认为round，详见clip函数
         
     get_ds : bool, optional
         是否获取临时栅格.当out_path为None时有效
-        The default is True.
+        The default is False.
     Double_operation : bool, optional
-        是否两次clip操作, 裁剪一次后重采样、重投影再裁剪第二次(原数据远大于目标范围时建议使用)
+        是否两次clip操作, 裁剪一次后重采样、重投影再裁剪第二次
+        1.减少reproject操作量，原数据远大于目标范围时建议使用
+        2.消除分辨率由小变大而外产生的cilp偏移量(？由大变小另行考虑)
         . The default is False.
     how:(str or int) , optional.
     重采样方式，The default is nearest.
@@ -121,7 +124,7 @@ def unify(raster_in,dst_in=None,out_path=None,
                        )
         
         src = stack.enter_context(rasterio.open(raster_in)) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
-        anames = ['crs', 'bounds', 'size', 'shape']
+        anames = ['crs', 'bounds', 'res', 'shape']
         # 目标属性
         if dst_in:
             
@@ -132,8 +135,8 @@ def unify(raster_in,dst_in=None,out_path=None,
             
             dst = stack.enter_context(rasterio.open(dst_in)) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
             
-            crs, bounds, shape = [getattr(dst, name) for name in anames if name != 'size']
-            size = dst.transform[0]
+            crs, bounds, res, shape = [getattr(dst, name) for name in anames]
+            # size = dst.transform[0]
             
             
             # 裁剪参数
@@ -143,13 +146,13 @@ def unify(raster_in,dst_in=None,out_path=None,
             dst_transform = dst.transform
             lock.release()  # 释放
         else:
-            crs, bounds, size, shape = [dst_attrs.get(name,None) for name in anames]
+            crs, bounds, res, shape = [dst_attrs.get(name,None) for name in anames]
         
         
         
         # 原属性
-        src_crs, src_bounds, src_shape = [getattr(src, name) for name in anames if name != 'size']
-        src_size = src.transform[0]
+        src_crs, src_bounds, src_res, src_shape = [getattr(src, name) for name in anames]
+        # src_size = src.transform[0]
         
         
         # 开始统一变换
@@ -160,7 +163,7 @@ def unify(raster_in,dst_in=None,out_path=None,
         
         if src_crs == crs:
             # 投影一致
-            if src_size == size:
+            if src_res == res:
                 # 分辨率一致, 裁剪后输出
                 
                 delete = '!True' if Double_operation else False  # 删除预裁剪生成栅格
@@ -179,10 +182,10 @@ def unify(raster_in,dst_in=None,out_path=None,
             
             else:
                 # 投影相同, 分辨率不同, 重采样
-                ds = reproject(src, crs=None, out_path=_temp_ph2, resolution=size, how=how)
+                ds = reproject(src, crs=None, out_path=_temp_ph2, resolution=res, how=how)
         else:
             # 投影不同(只在相同投影下比较分辨率, 不同投影默认分辨率不同), 重投影+重采样, 
-            ds = reproject(src, crs=crs,out_path=_temp_ph2,resolution=size,how=how)
+            ds = reproject(src, crs=crs,out_path=_temp_ph2,resolution=res,how=how)
         
     if Double_operation:
         #删除预裁剪生成栅格

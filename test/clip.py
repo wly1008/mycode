@@ -12,6 +12,7 @@ from rasterio.enums import MaskFlags
 from rasterio.windows import Window
 from rasterio.warp import transform_bounds
 
+import math
 import numpy as np
 import logging, pathlib, os
 from contextlib import ExitStack
@@ -21,12 +22,32 @@ from mycode.arcmap import create_raster, get_RasterAttr
 from mycode.arcmap import reproject as _reproject
 
 
-a = [[1, 2], [3, 4]]
-np.lib.pad(a, ((1, 0), (0, 0)), 'constant', constant_values=0)
 
 logger = logging.getLogger(__name__)
 
 def arr_off(arr_dst, src_transform, dst_transform, nodate=0):
+    '''
+    偏移纠正
+    偏移一个以内，同分辨率
+    暂只用与掩膜纠正
+    
+    Parameters
+    ----------
+    arr_dst : TYPE
+        掩膜数组.
+    src_transform : TYPE
+        被掩膜transform.
+    dst_transform : TYPE
+        掩膜transform.
+    nodate : TYPE, optional
+        掩膜数组填充值. The default is 0.
+
+    Returns
+    -------
+    TYPE
+        纠正后的掩膜数组.
+
+    '''
     src_xres, _, src_left, _, src_yres, src_top, _, _, _ = src_transform
     src_yres = -src_yres
     
@@ -41,43 +62,92 @@ def arr_off(arr_dst, src_transform, dst_transform, nodate=0):
     shape = arr_dst.shape
     count, height, width = shape
     
-    if dst_left - src_left > 0.5 * src_xres:
-        col = [0, 1]
-        coff = 1
+    # numx, modx = divmod(dst_left - src_left, src_xres)
     
-    elif dst_left - src_left < -0.5 * src_xres:
+    if dst_left - src_left > 0.5 * src_xres:
         col = [1, 0]
         coff = 0
+    
+    elif dst_left - src_left < -0.5 * src_xres:
+        col = [0, 1]
+        coff = 1
     
     else:
         col = [0, 0]
         coff = 0
     
-    if dst_top - src_top < 0.5 * src_yres:
-        row = [1, 0]
-        roff = 0
-    elif dst_top - src_top > -0.5 * src_yres:
+    if dst_top - src_top > 0.5 * src_yres:
         row = [0, 1]
         roff = 1
+    elif dst_top - src_top < -0.5 * src_yres:
+        
+        row = [1, 0]
+        roff = 0
     else:
         row = [0, 0]
         roff = 0
-    
+    # print(row, col)
     return np.pad(arr_dst,[[0, 0], row, col], mode='constant', constant_values=nodate)[:, roff : height+roff, coff : width+coff]
 
 
+
+def tr_winattr(off, length,*funcs,axis='col'):
+    '''调用取整方法，并消除off改变对length+off的影响'''
+    off_tr = funcs[0](off)
+    
+    if axis == 'col':
+        length_tr = off + length - off_tr
+    elif axis == 'row':
+        length_tr = off_tr - (off - length)
+    length_tr = funcs[-1](length_tr)
+    return int(off_tr), int(length_tr)
+
+# 窗口取整函数
+def round_window(win):
+    '''四舍五入'''
+    col_off, row_off, width, height = win.col_off, win.row_off, win.width, win.height
+    
+    col_off, width = tr_winattr(col_off, width, round, axis='col')
+    row_off, height = tr_winattr(row_off, height, round, axis='row')
+    
+    
+    # col_off, row_off, width, height = np.round((win.col_off, win.row_off, win.width, win.height)).astype(int)
+    return Window(col_off, row_off, width, height)
+
+
+
+def rasterio_window(win):
+    '''rio.clip标准'''
+    
+    out_window = win.round_lengths()  # int(math.floor(x + 0.5)) 四舍五入
+    out_window = out_window.round_offsets()  # int(math.floor(x + 0.001)) 近乎向下取整，在0.001范围向上取
+    
+    return out_window
+
+
+
+def touch_window(win):
+    '''保留所有接触像元'''
+    col_off, row_off, width, height = win.col_off, win.row_off, win.width, win.height
+    
+    col_off, width = tr_winattr(col_off, width, *(int, np.ceil), axis='col')
+    row_off, height = tr_winattr(row_off, height, *(int, np.ceil), axis='row')
+    
+    
+    return Window(col_off, row_off, width, height)
 
 
 
 def clip(raster_in, dst_in=None, out_path=None,
          get_ds=True,
          bounds=None, 
+         mode='round',
          nodata = 'None',
          projection='geographic',
          with_complement=True,
          crop=False,
          arr_crop=None,
-         dst_transform=None,
+         # dst_transform=None,
          unify=0, 
          unify_options=None,
          delete=False,
@@ -100,6 +170,15 @@ def clip(raster_in, dst_in=None, out_path=None,
         是否获取临时栅格.当out_path为None时有效. Default: True.
     bounds : list、tuple, optional
         目标范围，(左，下，右，上). The default is None.
+    mode : str or function, optional
+        裁剪模式，默认为round，可自定义，参考上方round_window等
+        round: 
+            四舍五入
+        rio: rio.clip标准，
+            lengths:int(math.floor(x + 0.5)) 四舍五入
+            offsets:int(math.floor(x + 0.001)) 近乎向下取整，在0.001范围向上取
+        touch: 
+            保留所有接触像元
     nodata : 数字类, optional
         输出栅格无效值,为字符串"None"时源栅格一致. The default is 'None'.
     projection : CRS, optional
@@ -142,9 +221,10 @@ def clip(raster_in, dst_in=None, out_path=None,
 
     Returns
     -------
-    TYPE
-        DESCRIPTION.
-
+    if out_path:生成栅格文件，返回文件地址
+    elif get_ds:返回栅格数据(io.DatasetWriter)
+    else:返回重投影后的栅格矩阵（array）和 profile
+    
     '''
 
     
@@ -255,6 +335,7 @@ def clip(raster_in, dst_in=None, out_path=None,
                                      'the input raster')
         
         bounds_window = src.window(*bounds)
+
     
         if not with_complement:
             bounds_window = bounds_window.intersection(
@@ -294,10 +375,25 @@ def clip(raster_in, dst_in=None, out_path=None,
             bounds_window = Window(bounds_window.col_off, bounds_window.row_off, width, height)
             
             
+
             
-        # Align window, as in gdal_translate.
-        out_window = bounds_window.round_lengths()
-        out_window = out_window.round_offsets()
+
+        # Align window
+        
+        if mode == 'rio':
+            
+            out_window = rasterio_window(bounds_window)
+        elif mode == 'round':
+            
+            out_window = round_window(bounds_window)
+        elif mode == 'touch':
+            
+            out_window = touch_window(bounds_window)
+        
+        elif callable(mode):
+            out_window = mode(bounds_window)
+        else:
+            raise ValueError('mode 可选参数为 round,rio,touch,或者输入自定义窗口取整函数')
     
         height = int(out_window.height)
         width = int(out_window.width)
@@ -343,24 +439,23 @@ def clip(raster_in, dst_in=None, out_path=None,
         else:
             per_dataset = False
         if crop:
-            src_transform = transform
+            # src_transform = transform
             if dst_in:
                 
                 arr_crop = template_ds.read_masks(out_shape=arr.shape)
                 
-                dst_transform = template_ds.transform
+            #     dst_transform = template_ds.transform
                 
                 
-                arr_crop = arr_off(arr_crop, src_transform, dst_transform)
-            elif dst_transform:
-                arr_crop = arr_off(arr_crop, src_transform, dst_transform)
-
-
-            # else:
-            #     try:
-            #         arr_crop = unify_kwargs['arr_crop']
-            #     except:
-            #         raise ValueError('Plase input "arr_crop" to "unify_options" or input "dst_in"')
+            #     arr_crop = arr_off(arr_crop, src_transform, dst_transform)
+            # elif dst_transform:
+            #     arr_crop = arr_off(arr_crop, src_transform, dst_transform)
+            
+            elif arr_crop is None:
+                raise ValueError('--arr_crop or --dst_in required')
+            
+            
+            
             arr = np.where(arr_crop == 0, src_nodata, arr)
             if per_dataset:
                 arr_mask = np.where(arr_crop[0] == 0, src_nodata, arr_mask)
@@ -369,7 +464,7 @@ def clip(raster_in, dst_in=None, out_path=None,
     
     # 删除中间栅格
     if delete and issubclass(type(raster_in), (str,pathlib.PurePath)):
-
+        
         os.remove(raster_in)
     elif delete == '!True':
         file = raster_in.files[0]

@@ -133,13 +133,18 @@ def tr_winattr(off, length,*funcs):
     length_tr = funcs[-1](length_tr)
     return int(off_tr), int(length_tr)
 
+def round0(x):
+    if x % 1 == 0.5:
+        return np.ceil(x)
+    else:
+        return np.round(x)
 # 窗口取整函数
 def round_window(win):
     '''四舍五入'''
     col_off, row_off, width, height = win.col_off, win.row_off, win.width, win.height
     
-    col_off, width = tr_winattr(col_off, width, round)
-    row_off, height = tr_winattr(row_off, height, round)
+    col_off, width = tr_winattr(col_off, width, round0)
+    row_off, height = tr_winattr(row_off, height, round0)
     
     
     # col_off, row_off, width, height = np.round((win.col_off, win.row_off, win.width, win.height)).astype(int)
@@ -447,7 +452,7 @@ def _unify(raster_in, dst_in=None, out_path=None,
         out_kwargs = src.profile
         transform = src.window_transform(out_window)
         src_nodata = src.nodata
-        
+        bandNames = src.descriptions
         
         
         out_kwargs.update({
@@ -455,7 +460,8 @@ def _unify(raster_in, dst_in=None, out_path=None,
             'width': width,
             'transform': transform})
         
-        out_kwargs.update(**creation_options)
+        out_kwargs.update(descriptions=bandNames,
+                          **creation_options)
         
         if "blockxsize" in out_kwargs and int(out_kwargs["blockxsize"]) > width:
             del out_kwargs["blockxsize"]
@@ -479,6 +485,7 @@ def _unify(raster_in, dst_in=None, out_path=None,
                         boundless=True,
                         masked=True,
                         )
+
         if MaskFlags.per_dataset in src.mask_flag_enums[0]:
             per_dataset = True
             arr_mask = src.read_masks(
@@ -496,13 +503,6 @@ def _unify(raster_in, dst_in=None, out_path=None,
                 # arr_crop = template_ds.read_masks(out_shape=arr.shape)
                 arr_crop = template_ds.read_masks(out_shape=(template_ds.count, win_right.width, win_right.height))
                 
-                
-            #     dst_transform = template_ds.transform
-                
-                
-            #     arr_crop = arr_off(arr_crop, src_transform, dst_transform)
-            # elif dst_transform:
-            #     arr_crop = arr_off(arr_crop, src_transform, dst_transform)
             
             elif arr_crop is None:
                 raise ValueError('--arr_crop or --dst_in required')
@@ -521,37 +521,23 @@ def _unify(raster_in, dst_in=None, out_path=None,
                 left = win_right.col_off - out_window.col_off
                 right = (out_window.col_off + out_window.width) - (win_right.col_off + win_right.width)
                 col = [left, right]
-                # if right >= 0:
-                #     col = [left, right]
-                #     slice_col = slice(0, out_window.width)
-                # else:
-                #     col = [left, 0]
-                #     slice_col = slice(0, right)
+
                 
                 # row
                 top = win_right.row_off - out_window.row_off
                 bottom = (out_window.row_off + out_window.height) - (win_right.row_off + win_right.height)
                 row = [top, bottom]
-                # if right >= 0:
-                #     row = [top, bottom]
-                #     slice_row = slice(0, out_window.height)
-                # else:
-                #     row = [left, 0]
-                #     slice_row = slice(0, bottom)
-                    
-                
 
                 arr_crop = align(arr_crop, [[0, 0], row, col],mode='constant',constant_values=0)
-                # arr_crop = np.pad(arr_crop, [[0, 0], row, col])[:, slice_row, slice_col]
                 
             
             arr = np.where(arr_crop == 0, src_nodata, arr)
 
             if per_dataset:
                 arr_mask = np.where(arr_crop[0] == 0, src_nodata, arr_mask)
-                arr = np.array([[1,2],[1,2],[1,2]])
-                arr_crop = np.array([[1,0],[1,0]])
-                np.where(arr_crop==0, 9, arr)
+                # arr = np.array([[1,2],[1,2],[1,2]])
+                # arr_crop = np.array([[1,0],[1,0]])
+                # np.where(arr_crop==0, 9, arr)
     
     
     # 删除中间栅格
@@ -563,15 +549,18 @@ def _unify(raster_in, dst_in=None, out_path=None,
         raster_in.close()
         os.remove(file)
     
+    
+    
     # 更新无效值
-    if (nodata is None) and out_kwargs['nodata'] is None:
-        out_kwargs['nodata'] = 0
-        arr = np.where(arr == src_nodata, out_kwargs['nodata'], arr)
-        warnings.warn(
-            "源数据无nodata, 自动设定为0, 注意可能产生的影响。 如非所需请为参数nodata赋值",
-            SetNodataWarning,
-            stacklevel=stacklevel
-                        )
+    if nodata is None:
+        if out_kwargs['nodata'] is None:
+            out_kwargs['nodata'] = 0
+            arr = np.where(arr == src_nodata, out_kwargs['nodata'], arr)
+            warnings.warn(
+                "源数据无nodata, 自动设定为0, 注意可能产生的影响。 如非所需请为参数nodata赋值",
+                SetNodataWarning,
+                stacklevel=stacklevel
+                            )
     else:
         out_kwargs['nodata'] = nodata
         if src_nodata is None:
@@ -581,6 +570,9 @@ def _unify(raster_in, dst_in=None, out_path=None,
             arr  = np.where(np.isnan(arr), out_kwargs['nodata'], arr)
         else:
             arr = np.where(arr == src_nodata, out_kwargs['nodata'], arr)
+
+    
+
     
     if dtype is not None:
         out_kwargs['dtype'] = dtype
@@ -592,13 +584,14 @@ def _unify(raster_in, dst_in=None, out_path=None,
         if out_path:
             with rasterio.open(out_path, "w", **out_kwargs) as out:
                 out.write(arr)
-                
+                out.descriptions = bandNames
                 if per_dataset:
                     out.write_mask(arr_mask)
             return out_path
         elif get_ds:
             out = create_raster(**out_kwargs)
             out.write(arr)
+            out.descriptions = bandNames
             if per_dataset:
                 out.write_mask(arr_mask)
             return out

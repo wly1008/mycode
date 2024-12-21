@@ -4,12 +4,12 @@ Created on Sat Jul 22 11:40:41 2023
 
 @author: wly
 """
-from mycode._Raster import check,get_RasterAttr,unify,create_raster,reproject
+from mycode._Raster import check,get_RasterAttr,unify,create_raster,reproject,window
 from mycode.codes import *
 from mycode.models import *
+from mycode._Class import raster
 
-class raster():
-    pass
+
 
 
 def _Type_args_(Type,args=[]):
@@ -72,7 +72,7 @@ def _Type_args_names(Type):
     return names
 
 
-def arg_tidy(fn,*args,full=True,**kwargs):
+def arg_tidy(fn,*args,full=False,**kwargs):
     '''
     整理输入参数，除可变参数，其余放入kwargs中
     
@@ -127,6 +127,32 @@ def arg_tidy(fn,*args,full=True,**kwargs):
     return args,kwargs
 
 
+
+
+def runtime(fn):
+
+    '''
+    装饰器
+    为函数添加运行时间打印
+    
+    Parameters
+    ----------
+    fn : function
+        需要添加打印运行时间的函数
+
+    Returns
+    -------
+    newfunc.
+    
+    
+    '''
+    @wraps(fn)
+    def newfunc(*args,**kwargs):
+        s = time.time()
+        re = fn(*args,**kwargs)
+        print('运行时间：%.2f'%(time.time()-s)+'s')
+        return re
+    return newfunc
 
 def unify_project(dst:str=None,dst_list:str=None,dst_crs:CRS=None):
     '''
@@ -429,7 +455,7 @@ def unrepe(src:str,attrs:List[str],
                 kwargs_return[k] = all_kwargs[return_dict[k]]
             
             kwargs_return.update(return_kwargs)
-            print("return")
+
             return return_fn(**kwargs_return)
         
         return newfunc
@@ -437,7 +463,45 @@ def unrepe(src:str,attrs:List[str],
     
     return check_repe
     
+
+
+
+
+
+
+def split_window(*rasters):
     
+
+    
+    def wrapping(fn):
+        
+        
+        def newfunc(*args,**kwargs):
+            
+            dst = cd.get_first(rasters,)
+            
+            
+            
+        
+        
+        
+        
+        
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+            pass
+
 
 
 # #@unify_project(dst='raster_in')

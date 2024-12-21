@@ -14,7 +14,8 @@ from rasterio.windows import Window
 import mycode.arcmap as ap
 import numpy as np
 import warnings
-
+from tqdm import tqdm
+import rasterio.merge
 
 
 def create_raster(**kwargs):
@@ -140,25 +141,31 @@ def clip(raster_in,
          out_path=None, get_ds=True,
          Extract=False,
          win_shape=None,win_size=None,
+         Tqbm=True,
+         unify=False,
          u=False):
     '''
     
 
     Parameters
     ----------
-    raster_in : TYPE
+    raster_in : str
         被裁剪的栅格数据或栅格地址
-    dst_in : TYPE, optional
+    dst_in : str, optional
         目标范围的栅格数据或栅格地址
-    bounds : TYPE, optional
+    bounds : tuple, optional
         目标范围,(left, bottom, right, top),bounds与dst_in只需填其中一个，如都填的话bounds优先级更高dst_in失效
-    win_shape : TYPE, optional
+    win_shape : tuple, optional
         (height,width)
         分窗口运行，如数据量过大可使用此参数，自己试试分成 几乘几 个窗口可以运行.e.g.(3,3)-->分成九份写出
-    out_path : TYPE, optional
+    out_path : str, optional
         输出路径，如不填返回栅格矩阵和栅格profile
-    u : TYPE, optional
-        因范围转换导致行列数很可能无法整除，所有无法确保范围完全一致，(因此误差在1、2个栅格的样子)
+    Tqbm : bool, optional
+        是否显示进度条，The default is True.
+    u : TYPE, optional  （不推荐使用!）
+        因为不同的栅格数据或是来源或是处理不同，如配准手动配准的两个栅格大概率无法对齐，又或是处理不够规范，栅格是不对齐的。
+        栅格对齐没搞明白，不敢乱动，这个clip处理后不对齐的两个栅格范围的偏差不会超过一个栅格，一般没有什么关系
+        因栅格不对齐，所以无法确保范围完全一致，(误差在1个栅格大小内)
         
         这个填True者是使得范围显示的统一，但矩阵没变而且在arcmap中可以看到偏移，就是说这个参数没啥用
         . The default is False.
@@ -175,7 +182,7 @@ def clip(raster_in,
     # 获取栅格
     src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
     dst = rasterio.open(dst_in) if issubclass(type(dst_in), (str,pathlib.PurePath)) else dst_in
-    
+
     
     # 请保证数据空间参考一致
     if dst.crs != src.crs:
@@ -216,7 +223,13 @@ def clip(raster_in,
     
     y_off,x_off = src.index(left, top)
     y_end, x_end = src.index(right, bottom)
-    width, height = x_end-x_off, y_end-y_off
+    
+    
+    
+    if unify and ap.get_RasterAttr(src,'cell_size') == ap.get_RasterAttr(dst,'cell_size'):
+        width, height = dst.shape[::-1]
+    else:
+        width, height = x_end-x_off, y_end-y_off
     win = Window(x_off, y_off,width, height)
     
     # 获取transform(仿射变换)
@@ -228,7 +241,6 @@ def clip(raster_in,
     # 更新profile
     profile.update({'transform':transform, 'width':width, 'height':height})
     
-    
     # 返回处理
     if win_shape:
         # 分窗口写出数据
@@ -239,18 +251,28 @@ def clip(raster_in,
         # 输出
         if out_path:
             with rasterio.open(out_path, 'w', **profile) as ds:
+                if Tqbm:
+                    pbar = tqdm(total=win_shape[0]*win_shape[1], desc='clip')
                 for i in range(len(src_windows)):
                     src_win = src_windows[i]
                     dst_win = dst_windows[i]
                     arrx = src.read(window=src_win,boundless=True,fill_value=nodata)
                     ds.write(arrx,window=dst_win)
+                    pbar.update(1)
+                if Tqbm:
+                    pbar.close()
         elif get_ds:
             ds = create_raster(**profile)
+            if Tqbm:
+                pbar = tqdm(total=win_shape[0]*win_shape[1], desc='clip')
             for i in range(len(src_windows)):
                 src_win = src_windows[i]
                 dst_win = dst_windows[i]
                 arrx = src.read(window=src_win,boundless=True,fill_value=nodata)
                 ds.write(arrx,window=dst_win)
+                pbar.update(1)
+            if Tqbm:
+                pbar.close()
             return ds
         else:
             Exception("有问题")
@@ -271,6 +293,7 @@ def clip(raster_in,
         
     else:
         arr = src.read(window=win,boundless=True,fill_value=nodata)
+        np.unique(arr)
         if out_path:
             with rasterio.open(out_path,'w',**profile) as ds:
                 ds.write(arr)
@@ -282,7 +305,7 @@ def clip(raster_in,
             return arr, profile
 
 
-def resampling(raster_in, out_path, re_shape, win_shape, how='mode'):
+def resampling(raster_in, out_path, re_shape=None, re_size=None, win_shape=None, how='mode', Tqbm=True):
     '''
     分窗口重采样
     
@@ -317,15 +340,28 @@ def resampling(raster_in, out_path, re_shape, win_shape, how='mode'):
     
     # 创建输出栅格
     profile = src.profile
-    height, width = re_shape
-    transform = rasterio.transform.from_bounds(*src.bounds, width, height)
+    left, bottom, right, top = src.bounds
+    if re_size:
+        if (type(re_size) == int) | (type(re_size) == float):
+            xsize = re_size
+            ysize = re_size
+        else:
+            xsize, ysize = re_size
+        transform = rasterio.transform.from_origin(left,top, xsize, ysize)
+        height, width = np.ceil((top - bottom) / ysize), np.ceil((right - left) / xsize)
+    else:
+        height, width = re_shape
+        transform = rasterio.transform.from_bounds(*src.bounds, width, height)
     profile.update({'transform':transform, 'width':width, 'height':height})
-     
-    dst = rasterio.open(out_path1, 'w', **profile)
+    
+    dst = rasterio.open(out_path, 'w', **profile)
     
     # 获取源数据与输出数据对应窗口
+    win_shape = win_shape or (1,1)
     windows_src, _ = window(src,shape=win_shape)
     windows_dst, _ = window(dst,shape=win_shape)
+    if Tqbm:
+        pbar = tqdm(total=win_shape[0]*win_shape[1], desc='resampling')
     
     # 分窗口重采样
     for i in range(len(windows_src)):
@@ -338,6 +374,10 @@ def resampling(raster_in, out_path, re_shape, win_shape, how='mode'):
         arr = src.read(window=win_src, out_shape=out_shape,resampling=how)  # 重采样
         
         dst.write(arr,window=win_dst)  # 写出
+        if Tqbm:
+            pbar.update(1)
+    if Tqbm:
+        pbar.close()
     
 
 

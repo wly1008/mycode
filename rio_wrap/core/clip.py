@@ -16,7 +16,7 @@ def clip(
          get_ds=True,
          bounds=None, 
          mode='round',
-         nodata = 'None',
+         nodata = None,
          projection='geographic',
          with_complement=True,
          crop=False,

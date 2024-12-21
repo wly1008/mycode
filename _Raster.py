@@ -118,7 +118,6 @@ def add_attrs_raster(src, ds={}, **kwargs):
     cd.add_attrs(src, run=True, ds=ds, **dic)
 
 
-
 def check(raster_in,
           dst_in=None, dst_attrs=None,
           args=(), need=None,
@@ -142,8 +141,10 @@ def check(raster_in,
 
     Returns
     -------
-    True or False,
-    不同属性的列表
+    judge : bool
+        比较的属性是否一致
+    diffe : list
+        不一致属性的列表
     
 
     '''
@@ -174,13 +175,19 @@ def check(raster_in,
         [print(f'\n{"-"*w_len}\
                  \n{("<"+attrnames[i]+">"):-^{w_len}}\
                  \n--->src : {cd.wlen(src_attrs[i],w_len,10)}\
+                 \n-\
                  \n--->dst : {cd.wlen(dst_attrs[i],w_len,10)}') 
          for i in range(len(attrnames)) if attrnames[i] in diffe]
         
-    if diffe == []:
-        return True,[]
-    else:
-        return False,diffe
+    judge = True if diffe == [] else False
+    
+    return judge,diffe
+
+
+
+
+
+
 def copy(raster_in, out_path):
     with rasterio.open(raster_in) as src:
         out_ds(ds=src,out_path=out_path)
@@ -257,39 +264,23 @@ def window(raster_in, shape):
     '''
 
     
-    src = rasterio.open(raster_in) if isinstance(raster_in, (str,pathlib.Path)) else raster_in
+    src = rasterio.open(raster_in) if issubclass(type(raster_in), (str,pathlib.PurePath)) else raster_in
     
     xsize, xend = divmod(src.width, shape[1])
     ysize, yend = divmod(src.height, shape[0])
     
     y_off = 0
-    y_inx = 0
     inxs = []
     # inx = {}
     windows = []
-    for ax0 in range(shape[0]):
-        
+    for y_inx,ax0 in enumerate(range(shape[0])):
         
         x_off = 0
-        x_inx = 0
+        height = ysize + yend if ax0 == (shape[0] - 1) else ysize
+        for x_inx,ax1 in enumerate(range(shape[1])):
 
-        if (ax0 == (shape[0] - 1)):
-            height = ysize + yend
-        else:
-            height = ysize
-
-        for ax1 in range(shape[1]):
-
-            if (ax1 == (shape[1] - 1)):
-                width = xsize + xend
-            else:
-                width = xsize
-
-            windown = Window(x_off, y_off, width, height)
-
-            windows.append(windown)
-            
-            
+            width = xsize + xend if ax1 == (shape[1] - 1) else xsize
+            windows.append(Window(x_off, y_off, width, height))
             
             '''
             
@@ -303,14 +294,11 @@ def window(raster_in, shape):
 
             inxs.append(inx.copy())
             '''
-            
             inxs.append((y_inx,x_inx))
             
             x_off += width
-            x_inx += 1
         
         y_off += height
-        y_inx += 1
 
     return windows, inxs
 

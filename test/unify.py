@@ -4,20 +4,20 @@ Created on Wed Aug 14 16:39:30 2024
 
 @author: wly
 """
+
 from contextlib import ExitStack
 import rasterio
-import mycode.arcmap as ap
-import mycode.test.clip_resampling as c1
-import rasterio,pathlib,os
+# import mycode.arcmap as ap
+# import mycode.test.clip_resampling as c1
+import pathlib,os
 import numpy as np
 from mycode.test.clip import clip
+from mycode.test.reproject import reproject
 from tqdm import tqdm
-import multiprocessing
 from functools import partial,wraps
-from concurrent.futures import ProcessPoolExecutor,ThreadPoolExecutor
+# __package__ = os.path.dirname(os.path.abspath(__file__))
 
 _temp_dir = os.path.dirname(os.path.abspath(__file__))
-
 
 def get_attrs(o, names):
     return [getattr(o, name) for name in names]
@@ -32,6 +32,7 @@ class nonelock():
 
 def unify(raster_in,dst_in=None,out_path=None,
           dst_attrs={'crs':None, 'bounds':None, 'size':None, 'shape':None},
+          mode='round',
           nodata='None',
           get_ds=True,
           Double_operation=False,
@@ -54,6 +55,9 @@ def unify(raster_in,dst_in=None,out_path=None,
     dst_attrs : dict, optional
         目标属性. 不与dst_in共用
         The default is {'crs':None, 'bounds':None, 'size':None, 'shape':None}.
+    mode : str, optional
+        裁剪模式，可选round,rio,touch或输入自定义函数，默认为round，详见clip函数
+        
     get_ds : bool, optional
         是否获取临时栅格.当out_path为None时有效
         The default is True.
@@ -72,8 +76,10 @@ def unify(raster_in,dst_in=None,out_path=None,
 
     Returns
     -------
-    TYPE
-        DESCRIPTION.
+    if out_path:生成栅格文件，返回文件地址
+    elif get_ds:返回栅格数据(io.DatasetWriter)
+    else:返回重投影后的栅格矩阵（array）和 profile
+    
 
     '''
     
@@ -114,14 +120,12 @@ def unify(raster_in,dst_in=None,out_path=None,
             if crop:
                 arr_crop = dst.read_masks()
             dst_transform = dst.transform
-            dst.close()
             lock.release()
         else:
             crs, bounds, size, shape = [dst_attrs.get(name,None) for name in anames]
         
         # 裁剪相关
         
-
         
         
         # 原属性
@@ -138,11 +142,12 @@ def unify(raster_in,dst_in=None,out_path=None,
         if src_crs == crs:
             
             if src_size == size:
-                ds = src
+                # ds = src
                 delete = '!True'
                 projection = crs or 'geographic'
-                return clip(ds, bounds=bounds,
+                return clip(src, bounds=bounds,
                             out_path=out_path,get_ds=get_ds,
+                            mode=mode,
                             projection=projection,
                             crop=crop,
                             arr_crop=arr_crop,
@@ -151,9 +156,9 @@ def unify(raster_in,dst_in=None,out_path=None,
                             unify_options=unify_options,delete=delete)
             
             else:
-                ds = ap.reproject(src, crs='src',out_path=_temp_ph2,resolution=size,how=how)
+                ds = reproject(src, crs=None, out_path=_temp_ph2, resolution=size, how=how)
         else:
-            ds = ap.reproject(src, crs=crs,out_path=_temp_ph2,resolution=size,how=how)
+            ds = reproject(src, crs=crs,out_path=_temp_ph2,resolution=size,how=how)
         
     if Double_operation:
         os.remove(_temp_ph1)
@@ -164,6 +169,7 @@ def unify(raster_in,dst_in=None,out_path=None,
 
     return clip(ds, bounds=bounds,
                 out_path=out_path,get_ds=get_ds,
+                mode=mode,
                 projection=projection,
                 crop=crop,
                 arr_crop=arr_crop,
@@ -175,22 +181,22 @@ def unify(raster_in,dst_in=None,out_path=None,
 
 
 
-if __name__ == '__main__':
+# if __name__ == '__main__':
     
     
+    # import mycode.arcmap as ap
     
+    # raster_in = r'F:/PyCharm/pythonProject1/代码/mycode/测试文件/源数据/1990-5km-tiff.tif'
+    # dst_in = r'F:/PyCharm/pythonProject1/代码/mycode/测试文件/源数据/eva_2.tif'
+    # out_path = r'F:\PyCharm\pythonProject1\代码\mycode\测试文件\ujh3.tif'
     
-    raster_in = r'F:/PyCharm/pythonProject1/代码/mycode/测试文件/源数据/1990-5km-tiff.tif'
-    dst_in = r'F:/PyCharm/pythonProject1/代码/mycode/测试文件/源数据/eva_2.tif'
-    out_path = r'F:\PyCharm\pythonProject1\代码\mycode\测试文件\ujh3.tif'
+    # src = rasterio.open(raster_in)
+    # dst = rasterio.open(dst_in)
     
-    src = rasterio.open(raster_in)
-    dst = rasterio.open(dst_in)
-    
-    # ap.check(src,dst,printf=1)
-    dst.transform
-    # clip(src,dst,out_path,crop=0,nodata=0,)
-    unify(src, dst,out_path,crop=1,nodata=0)
+    # # ap.check(src,dst,printf=1)
+    # dst.transform
+    # # clip(src,dst,out_path,crop=0,nodata=0,)
+    # unify(src, dst,out_path,crop=1,nodata=0)
     # ap.unify(src, dst,out_path,crop=1,nodata=0,Extract=1)
 
 

@@ -28,8 +28,10 @@ from rasterio.enums import Resampling
 from rasterio.warp import reproject as _reproject
 
 import mycode.codes as cd
+import mycode.tempSet as tp
 from mycode.decorator import unrepe
 from mycode._Class import raster,false
+
 
 
 
@@ -40,6 +42,14 @@ def create_raster(**kwargs):
     return memfile.open(**kwargs)
 
 
+def build_overviews(raster_in, level=4, how=Resampling.nearest):
+    factors = [2**(i+1) for i in range(int(level))]
+    
+    with rasterio.open(raster_in, 'r+') as dataset:
+        # 使用最近邻重采样方法构建概视图
+        dataset.build_overviews(factors, how)
+        # 设置概视图的压缩选项（可选）
+        dataset.update_tags(ns='rio_overview', compress='lzw')
 
 def get_RasterAttr(raster_in, *args, ds={}, **kwargs):
     """
@@ -655,7 +665,9 @@ def out(out_path, data, profile, update_stats=False, **kwargs):
         
         src.write(data)
         if update_stats:
-            src.update_stats()
+            # src.update_stats()  # raserio >= 1.4.0
+            for i in range(1,profile['count']+1):
+                src.statistics(i)
 
 
 def out_ds(ds, out_path,update_stats=False):
@@ -680,7 +692,9 @@ def out_ds(ds, out_path,update_stats=False):
     with rasterio.open(out_path, 'w', **profile) as src:
         src.write(arr)
         if update_stats:
-            src.update_stats()
+            # src.update_stats()  # raserio >= 1.4.0
+            for i in range(1,profile['count']+1):
+                src.statistics(i)
 
 
 def renan(raster_in, dst_in=None, nan=np.nan, dtype=np.float32, get_ds=True, out_path=None):
@@ -715,9 +729,7 @@ def renan(raster_in, dst_in=None, nan=np.nan, dtype=np.float32, get_ds=True, out
     
     
     nan,dtype = get_RasterAttr(dst_in,'nodata','dtype',**{'dtype':r'profile["dtype"]'}) if dst_in else nan,dtype
-    # if isinstance(dtype, str):
-    #     dtype = dtype if 'np.' in dtype else 'np.' + dtype if dtype != 'float' else 'np.float64'
-    #     dtype = eval(dtype)
+
     arr, profile = read(raster_in=raster_in,n=2,tran=False, get_df=False,nan=nan,dtype=dtype)
     
     return _return(out_path=out_path, get_ds=get_ds, arr=arr, profile=profile)
@@ -1965,9 +1977,133 @@ def zonal_u(raster_in, dst_in, stats, areas=[], dic=None, index='area',get_ds=No
 其他
 
 '''
+import xarray as xr
+# def nc_to_tif(ds_nc,
+#               vr=None,
+#               arr_vr=None,
+#               out_ph=None,
+#               loc_names=None,
+#               crs='EPSG:4326',
+#               dtype='float32',
+#               nodata=None):
+#     '''
+#     nc转tif
+#     # (数据维度及排序为(time,lat,lon),或（lat,lon)可用)
+#     仅限维度为二[lat,lon] --- [height, width]
+#     或维度大小为三[*, lat,lon] --- [count, height, width] 第三个维度将设为栅格波段维度
+#     *维度顺序不限将自动排序
+
+#     Parameters
+#     ----------
+#     ds_nc : xr.Dataset,xr.DataArray
+#         nc数据
+#     vr : str
+#         提取的变量
+#     arr_vr : array
+#         变量矩阵
+#     out_ph : str
+#         输出位置
+#     loc_names : dict, optional
+#         lon,lat的对应变量名,默认为lon,lat
+        
+#         eg. {'lon':'longitude', 'lat':'latitude'}
+        
+#     crs : str, dict, or CRS; optional
+#         空间参考. The default is 'EPSG:4326'.
+#     dtype :  str or numpy dtype, optional
+#         数据类型. The default is 'float32'.
+#     nodata : int, float, or nan; optional
+#         无效值.
+
+#     Returns
+#     -------
+#     if out_ph is None :
+#         return arr_vr, profile
+#     else:
+#         output tif and return out_ph
+
+#     '''
+    
+#     # 计算transform
+#     if loc_names is None:
+#         loc_names = {}
+    
+#     lon_name = loc_names.get('lon', 'lon')
+#     lat_name = loc_names.get('lat', 'lat')
+    
+#     dims = list(ds_nc.dims) if vr is None else list(ds_nc[vr].dims)
+#     assert {lat_name,lon_name}.issubset(set(dims)) , '未找到代表lat、lon的维度，尝试重新定义loc_names参数'
+    
+#     assert len(dims) <= 3, 'dims长度超限，仅接受代表维度[lat, lon]或[band, lat, lon]'
+        
+    
+#     # 维度排序
+#     loc = [lat_name, lon_name]
+#     if len(dims) == 3:
+#         new_dims = [i for i in dims if i not in loc] + loc
+#     else:
+#         new_dims = loc
+#     if dims != new_dims:
+#         ds_nc = ds_nc.transpose(*new_dims)
+    
+    
+#     # 获取经纬度序列
+#     lon = ds_nc[lon_name].data
+#     lat = ds_nc[lat_name].data
+    
+#     # 获取分辨率
+#     res_lon = abs(lon[1] - lon[0])
+#     res_lat = abs(lat[1] - lat[0])
+    
+#     # 计算栅格transform
+#     transform = from_origin(west=lon.min()-res_lon/2,
+#                             north=lat.max()+res_lat/2,
+#                             xsize=res_lon, ysize=res_lat)
+    
+    
+#     # 获取数据矩阵
+#     if arr_vr is None:
+#         if isinstance(ds_nc, xr.DataArray):
+#             arr_vr = ds_nc.data
+#         else:
+#             arr_vr = ds_nc[vr].data
+    
+#     # 统一为三维(count, height, width), 并获取shape
+#     if arr_vr.ndim == 2:
+#         arr_vr = np.array([arr_vr])
+#     count, height, width = arr_vr.shape
+    
+#     # 检查经纬度方向, 保证lat递减, lon递增
+#     if lat[1] > lat[0]:
+#         arr_vr = np.flip(arr_vr,axis=1) 
+#     if lon[1] < lon[0]:
+#         arr_vr = np.flip(arr_vr,axis=2) 
+    
+#     # 定义profile
+#     profile = {
+#         "driver": "GTiff",
+#         "dtype": dtype,
+#         "width": width,
+#         "height": height,
+#         "count": count,
+#         "crs": crs,
+#         "transform": transform,
+#         "nodata": nodata
+#     }
+    
+#     if out_ph is None:
+#         return arr_vr, profile
+#     else:
+#         # 输出
+#         with rasterio.open(out_ph, 'w', **profile) as dst:
+#             dst.write(arr_vr)
+#         return out_ph
+
+
 
 def nc_to_tif(ds_nc,
-              vr,
+              vr=None,
+              arr_vr=None,
               out_ph=None,
               loc_names=None,
               crs='EPSG:4326',
@@ -1975,14 +2111,18 @@ def nc_to_tif(ds_nc,
               nodata=None):
     '''
     nc转tif
-    (数据维度及排序为(time,lat,lon),或（lat,lon))
+    仅限维度为二[lat,lon] --- [height, width]
+    或维度大小为三[*, lat,lon] --- [count, height, width] 第三个维度将设为栅格波段维度
+    *维度顺序不限将自动排序
 
     Parameters
     ----------
-    ds_nc : xr.Dataset
-        nc数据
+    ds_nc : xr.Dataset,xr.DataArray
+        nc变量
     vr : str
         提取的变量
+    arr_vr : array  * 还需完善,使用此参数维度顺序暂时不自动排序
+        变量矩阵, 提前计算所得通过此函数输出为tif, 如其dims不与ds_nc.dims相同，请输入与之dims相同的vr参数
     out_ph : str
         输出位置
     loc_names : dict, optional
@@ -1995,11 +2135,14 @@ def nc_to_tif(ds_nc,
     dtype :  str or numpy dtype, optional
         数据类型. The default is 'float32'.
     nodata : int, float, or nan; optional
-        无效值.
+        数据无效值.
 
     Returns
     -------
-    None.
+    if out_ph is None :
+        return arr_vr, profile
+    else:
+        output tif and return out_ph
 
     '''
     
@@ -2007,27 +2150,55 @@ def nc_to_tif(ds_nc,
     if loc_names is None:
         loc_names = {}
     
-    lon = ds_nc[loc_names.get('lon', 'lon')].data
-    lat = ds_nc[loc_names.get('lat', 'lat')].data
+    lon_name = loc_names.get('lon', 'lon')
+    lat_name = loc_names.get('lat', 'lat')
     
+    # dims判断
+    dims = list(ds_nc.dims) if vr is None else list(ds_nc[vr].dims)
+    assert {lat_name,lon_name}.issubset(set(dims)) , '未找到代表lat、lon的维度，尝试重新定义loc_names参数'
+    assert len(dims) <= 3, 'dims长度超限,期望长度2或3，得到%d。仅接受代表维度[lat, lon]或[band, lat, lon]'%len(dims)
+        
     
-    res_lon = lon[1] - lon[0]
+    # 维度排序
+    loc = [lat_name, lon_name]
+    if len(dims) == 3:
+        new_dims = [i for i in dims if i not in loc] + loc
+    else:
+        new_dims = loc
+    if dims != new_dims:
+        ds_nc = ds_nc.transpose(*new_dims)
+    
+    # 获取经纬度序列
+    lon = ds_nc[lon_name].data
+    lat = ds_nc[lat_name].data
+    
+    # 获取分辨率
+    res_lon = abs(lon[1] - lon[0])
     res_lat = abs(lat[1] - lat[0])
     
+    # 计算栅格transform
     transform = from_origin(west=lon.min()-res_lon/2,
                             north=lat.max()+res_lat/2,
                             xsize=res_lon, ysize=res_lat)
     
     
     # 获取数据矩阵
-    arr_vr = ds_nc[vr].data
+    if arr_vr is None:
+        if isinstance(ds_nc, xr.DataArray):
+            arr_vr = ds_nc.data
+        else:
+            arr_vr = ds_nc[vr].data
     
+    # 统一为三维(count, height, width), 并获取shape
     if arr_vr.ndim == 2:
         arr_vr = np.array([arr_vr])
     count, height, width = arr_vr.shape
     
+    # 检查经纬度方向, 保证lat递减, lon递增
     if lat[1] > lat[0]:
         arr_vr = np.flip(arr_vr,axis=1) 
+    if lon[1] < lon[0]:
+        arr_vr = np.flip(arr_vr,axis=2) 
     
     # 定义profile
     profile = {
@@ -2035,7 +2206,7 @@ def nc_to_tif(ds_nc,
         "dtype": dtype,
         "width": width,
         "height": height,
-        "count": count,  # 单波段
+        "count": count,
         "crs": crs,
         "transform": transform,
         "nodata": nodata
@@ -2043,66 +2214,233 @@ def nc_to_tif(ds_nc,
     
     if out_ph is None:
         return arr_vr, profile
-    # 输出
-    with rasterio.open(out_ph, 'w', **profile) as dst:
-        dst.write(arr_vr)
-    return out_ph
-
+    else:
+        # 输出
+        with rasterio.open(out_ph, 'w', **profile) as dst:
+            dst.write(arr_vr)
+        return out_ph
 # src = raster_in if type(raster_in) in (i[1] for i in inspect.getmembers(rasterio.io)) else rasterio.open(raster_in)
 # dst = dst_in if type(dst_in) in (i[1] for i in inspect.getmembers(rasterio.io)) else rasterio.open(dst_in)
 
 
 def get_geometry(ph_shp, crs=None):
-    shp = gpd.read_file(ph_shp) if crs is not None else gpd.read_file(ph_shp).to_crs(crs)
+    shp = gpd.read_file(ph_shp) if crs is None else gpd.read_file(ph_shp).to_crs(crs)
     return shp.geometry
 
 
 
-def rio_mask(dataset, shapes, crop=True,nodata=None,**kwgs):
-    '''
-    
+def rio_mask(dataset, shapes, crop=True,nodata=None,all_touched=False,**kwgs):
+    """
+    使用矢量形状对栅格数据进行掩膜操作，并返回掩膜后的数组和更新后的元信息。
 
     Parameters
     ----------
-    src_in : a dataset object opened in 'r' mode
-        栅格数据
-    shapes : iterable object
-        矢量形状，
-    crop : bool (opt)
-        是否裁剪到矢量范围,否则保留矢量几何范围外为无效值. The default is True.
-    nodata: int or float (opt)
-        值表示每个栅格波段内的nodata。
-        如果未设置，则默认为输入栅格的nodata值。
-        如果栅格没有设置nodata值，则默认为0。
-    **kwgs : 
-        DESCRIPTION.
+    dataset : rasterio.io.DatasetReader
+        栅格数据集，需以只读模式打开。
+    shapes : iterable
+        矢量形状列表，用于掩膜操作。
+    crop : bool, optional
+        是否裁剪到矢量范围，默认为 True。
+    nodata : int or float, optional
+        无效值。如果未提供，则使用输入栅格的 nodata 值；如果栅格没有 nodata 值，则默认为 0。
+    all_touched : bool, optional
+        如果为 True，则掩膜操作中会填充所有被形状边界触碰的像素；否则只填充形状内部的像素。
+    **kwgs : dict
+        其他关键字参数，传递给 `rasterio.mask.mask`。
 
     Returns
     -------
-    arrn : np.array
-        结果数组.
-    profile : Profile(from rasterio.profiles)
-        DESCRIPTION.
-
-    '''
+    arr : numpy.ndarray
+        掩膜处理后的数组。
+    profile : dict
+        更新后的数据集元信息（profile）。
+    """
     # crs = src_in.crs
     
     # shp = gpd.read_file(ph_shp).to_crs(crs)
     # shapes = shp.geometry
     
     profile = dataset.profile
-    # nodata = np.float32(src.nodata)
-    arr, tf = rasterio.mask.mask(dataset, shapes, crop=crop,nodata=nodata,**kwgs)
+    
+    if nodata is None:
+        nodata = 0 if dataset.nodata is None else dataset.nodata
+    
+    
+    arr, tf = rasterio.mask.mask(dataset, shapes,
+                                 crop=crop,nodata=nodata,
+                                 all_touched=all_touched,
+                                 **kwgs)
     profile.update({
                 # 'nodata':np.nan,
                 # 'count': 1,
                 # 'dtype':np.float32,
+                'nodata':nodata,
                 "height": arr.shape[1],
                 "width": arr.shape[2],
                 "transform": tf})
     return arr, profile
 
+        
 
+def nan_equal(arr, value):
+    """
+    判断数组中的值是否等于给定值（支持 NaN 值的比较）。
+    
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        输入数组。
+    value : int, float or None
+        要比较的值。
+    
+    Returns
+    -------
+    numpy.ndarray
+        布尔数组，表示每个元素是否等于给定值。
+    """
+    arr = np.asarray(arr)
+    if value is None or not np.isnan(value):
+        return np.equal(arr, value)
+    else:
+        return np.isnan(arr)
+
+
+
+def tif_fill_in_shp(dataset, shapes, mod_nan,
+                    fill_value=0, nodata=None,
+                    all_touched=False,
+                    dtype=None,
+                    **kwgs):
+
+    """
+    根据矢量形状（shapes）对栅格数据进行掩膜操作，并填充指定值，同时更新数据的 nodata 值。
+
+    参数：
+        dataset: rasterio.io.DatasetReader
+            打开的栅格数据集，需以可写模式（r+, w, w+）打开。
+        shapes: list
+            矢量形状列表，用于掩膜操作。
+        mod_nan: int 或 float
+            中间处理时的临时 nodata 值，请使用dataset中不存在的值, 不能与 `nodata` 或 `fill_value` 相同。
+        fill_value: int 或 float, 可选
+            填充的值，默认为 0。
+        nodata: int 或 float, 可选
+            栅格数据的 nodata 值。如果未提供，则使用 `dataset.nodata`。
+        all_touched: bool, 可选
+            如果为 True，则掩膜操作中会填充所有被形状边界触碰的像素；否则只填充形状内部的像素。
+        dtype: 数据类型, 可选
+            输出数组的 dtype。如果未提供，则保持与输入数据一致。
+        **kwgs: 其他关键字参数
+            传递给 rio_mask 的其他参数。
+
+    Returns:
+    ------
+        arr: numpy.ndarray
+            掩膜处理后的数组。
+        profile: dict
+            更新后的数据集元信息（profile），包括 nodata 和 dtype。
+
+    Raises
+    ------
+        ValueError: 如果 nodata、mod_nan 或 fill_value 存在冲突，或输入None (nodata输入None且dataset.nodata为None)。
+
+    Note：
+    ------
+        - `dataset` 必须以可写模式打开。
+        -.`mod_nan`请使用`dataset`中不存在的值
+        - `nodata`、`mod_nan` 和 `fill_value` 必须互不相同。
+        -.注意考虑`dataset`与`nodata`、`mod_nan` 和 `fill_value`的dtype兼容性
+    """
+    
+    
+    assert dataset.mode != 'r', '请使用可写模式打开数据集: r+, w, w+'
+    
+    
+    if nodata is None:
+        nodata = dataset.nodata
+    
+    args = {nodata, mod_nan, fill_value}
+    
+    if None in args:
+        raise ValueError(f'监测到None值输入, nodata{nodata}, mod_nan{mod_nan}, fill_value{fill_value}')
+    
+    if len(args) != 3:
+        raise ValueError(f'监测到输入值冲突, nodata{nodata}, mod_nan{mod_nan}, fill_value{fill_value},\n 请保证三者互不相同')
+    
+    
+    with tp.set_temp_attr(dataset, 'nodata', mod_nan):
+        '''此处dtype兼容性暂未测试'''
+        arrx, profile = rio_mask(dataset, shapes,
+                                 nodata=mod_nan,all_touched=all_touched,**kwgs)
+    
+    # arrx: shapes外位置为mod_nan, shapes内原nodata保持不变
+    
+    arr = np.where(nan_equal(arrx, nodata), fill_value, arrx)  # 将`nodata`(都在`shapes`内)替换为`fill_value`
+    arr = np.where(nan_equal(arrx, mod_nan), nodata, arr)  # 将`mod_nan`(都在`shapes`外, 且`shapes`外都是)替换为`nodata`
+    
+    if dtype is None:
+        profile.update(nodata=nodata)
+    else:
+        profile.update(nodata=nodata,
+                       dtype=dtype)
+    
+    return arr, profile
+
+
+
+
+# import numpy as np
+
+# def nan_equal(x1, x2):
+#     """
+#     比较两个数组或标量是否相等，支持 np.nan 的特殊处理。
+#     """
+#     x1, x2 = np.asarray(x1), np.asarray(x2)  # 转换为数组（如果是标量）
+    
+#     # 使用 np.isnan 检查 NaN 的位置
+#     nan_mask = np.isnan(x1) & np.isnan(x2)
+    
+#     # 正常的相等比较
+#     normal_equal = np.equal(x1, x2)
+    
+#     # 将 NaN 位置的比较结果设置为 True
+#     return normal_equal | nan_mask
+
+# x = nan_equal([1,None],1)
+
+
+
+# def nan_equal(arr, value):
+#     mode='easy'
+#     arr = np.asarray(arr)
+#     if mode == 'easy':
+#         if value is None or not np.isnan(value):
+#             return np.equal(arr, value)
+#         else:
+#             return np.isnan(arr)
+
+#     else:
+#         '''暂未完善, 不要使用'''
+#         arr = np.asarray(arr, dtype=object)
+        
+#         if value is None:
+#             # 如果 value 是 None，直接比较
+#             return np.equal(arr, None)
+#         elif isinstance(value, float) and np.isnan(value):
+#             # 如果 value 是 np.nan，检查 arr 中的 NaN
+#             return np.vectorize(lambda x: isinstance(x, float) and np.isnan(x))(arr)
+#         else:
+#             # 其他情况，直接比较
+#             return np.equal(arr, value)
+# import numpy as np
+
+# def nan_equal(arr, value):
+#     # Convert the input array to a NumPy array with dtype=float to handle np.nan
+#     arr = np.asarray(arr, dtype=float)
+#     if value is None or not np.isnan(value):
+#         return np.equal(arr, value)
+#     else:
+#         return np.isnan(arr)
 
 
 
